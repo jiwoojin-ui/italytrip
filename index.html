@@ -1,0 +1,1304 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="theme-color" content="#0F172A" />
+  <title>이탈리아 4인 가족여행 플래너 (2026.12.30~2027.1.9)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <style>
+    * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+    html, body {
+      height: 100dvh; width: 100vw; overflow: hidden; margin: 0; padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+      background: #F1F5F9; color: #0F172A;
+    }
+    input, select, textarea { font-size: 16px !important; }
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    .safe-pb { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+    .safe-pt { padding-top: env(safe-area-inset-top); }
+    .custom-pin {
+      display: flex; align-items: center; justify-content: center; border-radius: 9999px;
+      color: #fff; font-weight: 800; font-size: 12px; border: 2.5px solid #fff;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.32); transition: transform 0.15s ease;
+    }
+    .custom-pin.selected-ring { box-shadow: 0 0 0 3px #FACC15, 0 4px 12px rgba(0,0,0,0.4); transform: scale(1.12); }
+    .leaflet-popup-content-wrapper { border-radius: 14px; padding: 2px; box-shadow: 0 10px 25px rgba(15, 23, 42, 0.18); }
+    .leaflet-popup-content { margin: 10px 12px; line-height: 1.45; }
+    #bottomSheet { transition: height 0.26s cubic-bezier(0.22, 1, 0.36, 1); will-change: height; }
+    #bottomSheet.dragging { transition: none; }
+  </style>
+</head>
+<body class="flex flex-col">
+
+  <!-- 1. SLIM SINGLE-ROW TOP HEADER -->
+  <header class="safe-pt bg-slate-900 text-white px-2.5 h-12 flex items-center justify-between gap-1.5 shrink-0 z-30 shadow-md">
+    <div class="flex items-center gap-1 min-w-0 flex-1">
+      <button onclick="cycleTab(-1)" aria-label="이전 탭" class="w-9 h-9 flex items-center justify-center rounded-lg bg-slate-800 active:bg-slate-700 text-slate-300 shrink-0">◀</button>
+      <select id="citySelector" onchange="switchTab(this.value)" class="bg-slate-800 text-white font-bold rounded-lg px-2.5 h-9 flex-1 min-w-0 border border-slate-700 truncate">
+        <option value="airport">✈️ 공항 ↔ 숙소 이동 (12/30·1/9)</option>
+        <option value="milan" selected>🇮🇹 밀라노 (12/30~1/1)</option>
+        <option value="venice">🚤 베네치아 (1/1~1/3)</option>
+        <option value="florence">🎨 피렌체 (1/3~1/5)</option>
+        <option value="rome">🏛️ 로마 4박 (1/5~1/9)</option>
+      </select>
+      <button onclick="cycleTab(1)" aria-label="다음 탭" class="w-9 h-9 flex items-center justify-center rounded-lg bg-slate-800 active:bg-slate-700 text-slate-300 shrink-0">▶</button>
+    </div>
+    <div class="flex items-center gap-1.5 shrink-0">
+      <button id="syncBadgeBtn" onclick="openFirebaseModal()" class="h-9 px-2.5 rounded-lg bg-slate-800 border border-slate-700 flex items-center gap-1.5 text-xs font-semibold active:scale-95">
+        <span id="syncDot" class="w-2.5 h-2.5 rounded-full bg-slate-400"></span>
+        <span id="syncLabel" class="hidden sm:inline">로컬 저장</span>
+        <span id="syncShort" class="sm:hidden">로컬</span>
+      </button>
+      <button onclick="openMoreMenu()" aria-label="더보기 메뉴" class="w-10 h-9 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-lg font-bold active:bg-slate-700">⋯</button>
+    </div>
+  </header>
+
+  <!-- 2. COMPACT COLLAPSIBLE FILTER BAR -->
+  <div id="cityFilterBar" class="bg-white border-b border-slate-200 px-3 py-1.5 shrink-0 z-20 shadow-sm">
+    <div class="flex items-center justify-between gap-2">
+      <div class="flex bg-slate-100 p-0.5 rounded-lg shrink-0">
+        <button id="modeAllBtn" onclick="setViewMode('all')" class="px-2.5 py-1.5 rounded-md text-xs font-bold bg-white text-slate-900 shadow-sm">전체 후보</button>
+        <button id="modeSelBtn" onclick="setViewMode('selected')" class="px-2.5 py-1.5 rounded-md text-xs font-bold text-slate-600">★ 내 일정 (<span id="selectedCountBadge">0</span>)</button>
+      </div>
+      <button onclick="toggleFilterDrawer()" class="flex-1 min-w-0 h-8 px-2.5 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-between text-xs font-semibold text-slate-700 active:bg-slate-100">
+        <span id="filterSummaryText" class="truncate">전체 권역 · 전체 분류</span>
+        <span id="filterChevron" class="ml-1 text-slate-400">▾</span>
+      </button>
+    </div>
+    <div id="filterDrawer" class="hidden pt-2 pb-1 space-y-2 border-t border-slate-100 mt-1.5">
+      <div id="selectedSubRow" class="hidden flex items-center justify-between bg-amber-50 px-2.5 py-1.5 rounded-lg border border-amber-200">
+        <span class="text-xs font-bold text-amber-900">정렬 기준</span>
+        <div class="flex gap-1">
+          <button id="sortZoneBtn" onclick="setSortMode('zone')" class="px-2.5 py-1 rounded text-xs font-bold bg-amber-600 text-white">권역별</button>
+          <button id="sortTimeBtn" onclick="setSortMode('time')" class="px-2.5 py-1 rounded text-xs font-bold bg-white text-amber-900 border border-amber-300">🕒 일자·시간순</button>
+        </div>
+      </div>
+      <div>
+        <div class="text-[11px] font-bold text-slate-400 mb-1">권역(ZONE) 필터</div>
+        <div id="zoneChipsContainer" class="flex gap-1.5 overflow-x-auto no-scrollbar pb-0.5"></div>
+      </div>
+      <div>
+        <div class="text-[11px] font-bold text-slate-400 mb-1">카테고리 필터</div>
+        <div id="catChipsContainer" class="flex gap-1.5 overflow-x-auto no-scrollbar pb-0.5"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. MAIN VIEWPORT -->
+  <main class="relative flex-1 w-full overflow-hidden">
+    <div id="map" class="w-full h-full z-0"></div>
+    <div class="absolute top-2.5 right-2.5 z-10 flex flex-col gap-1.5">
+      <button id="tileToggleBtn" onclick="toggleMapTile()" class="h-9 px-3 rounded-full bg-white/95 backdrop-blur shadow-md border border-slate-200 text-xs font-bold text-slate-800 active:scale-95">🗺️ 기본지도</button>
+      <button id="lineToggleBtn" onclick="togglePolylines()" class="h-9 px-3 rounded-full bg-white/95 backdrop-blur shadow-md border border-slate-200 text-xs font-bold text-emerald-700 active:scale-95">● 동선 선 ON</button>
+      <button onclick="fitCurrentBounds()" class="h-9 px-3 rounded-full bg-white/95 backdrop-blur shadow-md border border-slate-200 text-xs font-bold text-slate-700 active:scale-95">🎯 전체 보기</button>
+    </div>
+
+    <div id="mapCarouselWrapper" class="hidden absolute left-0 right-0 z-10 px-2" style="bottom: calc(15dvh + 10px);">
+      <div id="mapCarousel" class="flex gap-2.5 overflow-x-auto no-scrollbar snap-x snap-mandatory py-1"></div>
+    </div>
+
+    <button id="fabAddBtn" onclick="openAddModal()" class="fixed right-3.5 z-20 h-12 px-4 rounded-full bg-slate-900 text-white font-bold text-sm shadow-xl border border-slate-700 flex items-center gap-1.5 active:scale-95 transition-all" style="bottom: calc(52dvh + 12px);">
+      <span class="text-lg leading-none">+</span><span>장소 등록</span>
+    </button>
+
+    <section id="bottomSheet" class="absolute bottom-0 left-0 right-0 z-20 bg-white rounded-t-2xl shadow-[0_-6px_25px_rgba(15,23,42,0.16)] border-t border-slate-200 flex flex-col" style="height: 52dvh;">
+      <div id="sheetDragHandle" class="pt-2 pb-1.5 px-3 border-b border-slate-100 shrink-0 cursor-grab active:cursor-grabbing select-none touch-none">
+        <div class="w-10 h-1.5 bg-slate-300 rounded-full mx-auto mb-2"></div>
+        <div class="flex items-center justify-between gap-2">
+          <div class="text-xs font-extrabold text-slate-800 truncate" id="sheetTitle">밀라노 추천 장소</div>
+          <div class="flex items-center gap-1 shrink-0">
+            <button id="snapPeekBtn" onclick="setSheetState('peek')" class="px-2.5 py-1 rounded-md text-[11px] font-bold bg-slate-100 text-slate-600">지도 크게</button>
+            <button id="snapHalfBtn" onclick="setSheetState('half')" class="px-2.5 py-1 rounded-md text-[11px] font-bold bg-slate-900 text-white">반반</button>
+            <button id="snapFullBtn" onclick="setSheetState('full')" class="px-2.5 py-1 rounded-md text-[11px] font-bold bg-slate-100 text-slate-600">목록 크게</button>
+          </div>
+        </div>
+      </div>
+      <div id="sheetContent" class="flex-1 overflow-y-auto px-3 pt-2.5 safe-pb space-y-3"></div>
+    </section>
+  </main>
+
+  <!-- MODAL 1: 2-STEP PLACE REGISTRATION -->
+  <div id="addPlaceModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center">
+    <div class="bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl max-h-[92dvh] flex flex-col shadow-2xl overflow-hidden">
+      <div class="px-4 py-3 border-b border-slate-200 flex items-center justify-between shrink-0">
+        <div>
+          <span class="text-[11px] font-extrabold text-blue-600 uppercase tracking-wider" id="addStepBadge">STEP 1 / 2 · 위치 지정</span>
+          <h3 class="text-base font-extrabold text-slate-900" id="addModalTitle">내 장소 직접 등록</h3>
+        </div>
+        <button onclick="closeAddModal()" class="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-600 font-bold text-lg">✕</button>
+      </div>
+      <div id="addStep1" class="p-3.5 overflow-y-auto space-y-3 flex-1">
+        <div class="flex gap-1.5 overflow-x-auto no-scrollbar">
+          <button onclick="applyQuickTemplate('숙소')" class="px-3 py-2 rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 text-xs font-bold shrink-0">🏨 우리 가족 숙소</button>
+          <button onclick="applyQuickTemplate('열차')" class="px-3 py-2 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold shrink-0">🚄 기차역 / 이동 거점</button>
+          <button onclick="applyQuickTemplate('맛집')" class="px-3 py-2 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 text-xs font-bold shrink-0">🍝 새로 찾은 맛집</button>
+        </div>
+        <div class="space-y-1.5">
+          <div class="flex gap-1.5">
+            <input id="placeSearchInput" type="text" placeholder="장소명, 주소 또는 구글맵 URL 붙여넣기" class="flex-1 h-11 px-3 rounded-xl border border-slate-300 bg-slate-50 focus:bg-white focus:border-slate-900 outline-none" onkeydown="if(event.key==='Enter') searchPlaceLocation()" />
+            <button onclick="searchPlaceLocation()" class="h-11 px-4 rounded-xl bg-slate-900 text-white font-bold text-sm shrink-0">검색</button>
+          </div>
+          <div class="flex items-center justify-between text-xs text-slate-500 px-0.5">
+            <span>지도를 직접 터치해도 핀이 찍힙니다</span>
+            <a id="extGoogleMapsSearchLink" href="https://www.google.com/maps" target="_blank" rel="noopener" class="text-blue-600 font-bold underline">구글맵에서 찾기 ↗</a>
+          </div>
+        </div>
+        <div id="searchResultsList" class="hidden space-y-1 max-h-32 overflow-y-auto bg-slate-50 p-1.5 rounded-xl border border-slate-200"></div>
+        <div class="relative rounded-xl overflow-hidden border-2 border-slate-200" style="height: 230px;">
+          <div id="miniMap" class="w-full h-full"></div>
+          <div id="miniMapStatus" class="absolute bottom-2 left-2 right-2 bg-white/95 backdrop-blur px-3 py-1.5 rounded-lg shadow text-xs font-bold text-slate-800 text-center pointer-events-none">👆 지도를 터치하여 정확한 위치를 지정하세요</div>
+        </div>
+        <div id="autoZonePreview" class="bg-blue-50 border border-blue-200 rounded-xl px-3 py-2 text-xs text-blue-900 font-semibold flex items-center justify-between">
+          <span>자동 배정 권역: <strong id="detectedZoneName">A존 · 도심 핵심</strong></span>
+          <span class="text-[11px] text-blue-600">거리 기반 자동 분류</span>
+        </div>
+      </div>
+      <div id="addStep2" class="hidden p-3.5 overflow-y-auto space-y-3.5 flex-1">
+        <div>
+          <label class="block text-xs font-bold text-slate-600 mb-1">장소 이름 *</label>
+          <input id="newPlaceName" type="text" placeholder="예: 밀라노 에어비앤비 숙소" class="w-full h-11 px-3 rounded-xl border border-slate-300 font-semibold" />
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-600 mb-1">카테고리</label>
+          <div class="grid grid-cols-5 gap-1.5" id="newCatSelector">
+            <button type="button" onclick="selectNewCat('숙소/교통')" data-cat="숙소/교통" class="cat-opt py-2.5 rounded-xl border text-xs font-bold bg-slate-900 text-white border-slate-900">숙소/교통</button>
+            <button type="button" onclick="selectNewCat('명소')" data-cat="명소" class="cat-opt py-2.5 rounded-xl border text-xs font-bold bg-white text-slate-700 border-slate-200">명소</button>
+            <button type="button" onclick="selectNewCat('식당')" data-cat="식당" class="cat-opt py-2.5 rounded-xl border text-xs font-bold bg-white text-slate-700 border-slate-200">식당</button>
+            <button type="button" onclick="selectNewCat('카페/간식')" data-cat="카페/간식" class="cat-opt py-2.5 rounded-xl border text-xs font-bold bg-white text-slate-700 border-slate-200">카페</button>
+            <button type="button" onclick="selectNewCat('쇼핑')" data-cat="쇼핑" class="cat-opt py-2.5 rounded-xl border text-xs font-bold bg-white text-slate-700 border-slate-200">쇼핑</button>
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-600 mb-1">방문 예정일</label>
+          <div id="newDateChips" class="flex gap-1.5 overflow-x-auto no-scrollbar"></div>
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-600 mb-1">방문 시간 (원터치 설정)</label>
+          <div class="flex items-center gap-1.5 mb-1.5">
+            <button type="button" onclick="adjustNewTime(-30)" class="h-10 px-3 rounded-xl bg-slate-100 font-bold text-xs active:bg-slate-200">-30분</button>
+            <input id="newPlaceTime" type="time" value="14:00" class="flex-1 h-10 px-3 rounded-xl border border-slate-300 text-center font-bold" />
+            <button type="button" onclick="adjustNewTime(30)" class="h-10 px-3 rounded-xl bg-slate-100 font-bold text-xs active:bg-slate-200">+30분</button>
+          </div>
+          <div class="flex gap-1.5 overflow-x-auto no-scrollbar">
+            <button type="button" onclick="setNewTime('09:30')" class="px-2.5 py-1.5 rounded-lg bg-slate-100 text-xs font-semibold">09:30</button>
+            <button type="button" onclick="setNewTime('12:00')" class="px-2.5 py-1.5 rounded-lg bg-slate-100 text-xs font-semibold">12:00</button>
+            <button type="button" onclick="setNewTime('14:30')" class="px-2.5 py-1.5 rounded-lg bg-slate-100 text-xs font-semibold">14:30</button>
+            <button type="button" onclick="setNewTime('17:00')" class="px-2.5 py-1.5 rounded-lg bg-slate-100 text-xs font-semibold">17:00</button>
+            <button type="button" onclick="setNewTime('19:30')" class="px-2.5 py-1.5 rounded-lg bg-slate-100 text-xs font-semibold">19:30</button>
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-600 mb-1">주소 / 예약·체크인 메모</label>
+          <input id="newPlaceAddr" type="text" placeholder="도로명 주소 (자동 입력 또는 직접 수정)" class="w-full h-10 px-3 rounded-xl border border-slate-300 mb-1.5 text-sm" />
+          <input id="newPlaceMemo" type="text" placeholder="예: 셀프 체크인 코드 1234 / 4인 예약 완료" class="w-full h-10 px-3 rounded-xl border border-slate-300 text-sm" />
+        </div>
+      </div>
+      <div class="p-3 border-t border-slate-200 bg-slate-50 flex gap-2 shrink-0 safe-pb">
+        <button id="addBackBtn" onclick="goAddStep(1)" class="hidden h-12 px-4 rounded-xl bg-white border border-slate-300 font-bold text-sm text-slate-700">← 위치 다시 지정</button>
+        <button id="addNextBtn" onclick="goAddStep(2)" class="flex-1 h-12 rounded-xl bg-slate-900 text-white font-bold text-sm">다음: 이름·시간 입력 →</button>
+        <button id="addSaveBtn" onclick="saveNewPlace()" class="hidden flex-1 h-12 rounded-xl bg-blue-600 text-white font-bold text-sm shadow-lg">✓ 일정에 등록 완료</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 2: SCHEDULE EDITOR -->
+  <div id="scheduleModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center">
+    <div class="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl p-4 space-y-3.5 shadow-2xl safe-pb">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-2.5">
+        <h3 class="font-extrabold text-base text-slate-900 truncate pr-2" id="schedPlaceTitle">일정 및 예약 설정</h3>
+        <button onclick="closeScheduleModal()" class="w-9 h-9 rounded-full bg-slate-100 font-bold text-slate-600">✕</button>
+      </div>
+      <div>
+        <label class="block text-xs font-bold text-slate-500 mb-1">방문 일자</label>
+        <div id="schedDateChips" class="flex gap-1.5 overflow-x-auto no-scrollbar"></div>
+      </div>
+      <div>
+        <label class="block text-xs font-bold text-slate-500 mb-1">방문 시간</label>
+        <div class="flex items-center gap-1.5 mb-1.5">
+          <button type="button" onclick="adjustSchedTime(-30)" class="h-11 px-3.5 rounded-xl bg-slate-100 font-bold text-xs active:bg-slate-200">-30분</button>
+          <input id="schedTimeInput" type="time" class="flex-1 h-11 px-3 rounded-xl border border-slate-300 text-center font-bold" />
+          <button type="button" onclick="adjustSchedTime(30)" class="h-11 px-3.5 rounded-xl bg-slate-100 font-bold text-xs active:bg-slate-200">+30분</button>
+        </div>
+        <div class="flex gap-1.5 overflow-x-auto no-scrollbar">
+          <button type="button" onclick="document.getElementById('schedTimeInput').value='09:30'" class="px-2.5 py-1.5 rounded-lg bg-slate-100 text-xs font-semibold">09:30</button>
+          <button type="button" onclick="document.getElementById('schedTimeInput').value='12:00'" class="px-2.5 py-1.5 rounded-lg bg-slate-100 text-xs font-semibold">12:00</button>
+          <button type="button" onclick="document.getElementById('schedTimeInput').value='14:30'" class="px-2.5 py-1.5 rounded-lg bg-slate-100 text-xs font-semibold">14:30</button>
+          <button type="button" onclick="document.getElementById('schedTimeInput').value='17:00'" class="px-2.5 py-1.5 rounded-lg bg-slate-100 text-xs font-semibold">17:00</button>
+          <button type="button" onclick="document.getElementById('schedTimeInput').value='19:30'" class="px-2.5 py-1.5 rounded-lg bg-slate-100 text-xs font-semibold">19:30</button>
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs font-bold text-slate-500 mb-1">예약 상태</label>
+        <div class="grid grid-cols-3 gap-1.5" id="schedStatusGroup">
+          <button type="button" onclick="selectSchedStatus('예약 완료')" data-st="예약 완료" class="st-opt h-11 rounded-xl border text-xs font-bold">✅ 예약 완료</button>
+          <button type="button" onclick="selectSchedStatus('예약 필수')" data-st="예약 필수" class="st-opt h-11 rounded-xl border text-xs font-bold">⏰ 예약 필수</button>
+          <button type="button" onclick="selectSchedStatus('워크인')" data-st="워크인" class="st-opt h-11 rounded-xl border text-xs font-bold">🚶 워크인/자유</button>
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs font-bold text-slate-500 mb-1">메모 (예약번호·팁)</label>
+        <input id="schedMemoInput" type="text" placeholder="예: 바우처 출력물 지참 / 20분 전 도착" class="w-full h-11 px-3 rounded-xl border border-slate-300" />
+      </div>
+      <div class="flex gap-2 pt-1">
+        <button onclick="clearScheduleItem()" class="h-12 px-3.5 rounded-xl bg-slate-100 text-slate-600 font-bold text-xs">일정 비우기</button>
+        <button onclick="saveScheduleItem()" class="flex-1 h-12 rounded-xl bg-slate-900 text-white font-bold text-sm">저장 및 ★ 일정 담기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 3: TAXI BIG-TEXT CARD -->
+  <div id="taxiCardModal" class="hidden fixed inset-0 z-50 bg-slate-950 text-white flex flex-col justify-between p-5 safe-pt safe-pb">
+    <div class="flex items-center justify-between">
+      <span class="px-3 py-1 rounded-full bg-amber-400 text-slate-950 font-extrabold text-xs">🚕 현지 제시용 큰 글씨 카드</span>
+      <button onclick="closeTaxiCard()" class="w-11 h-11 rounded-full bg-slate-800 text-white font-bold text-xl">✕</button>
+    </div>
+    <div class="my-auto space-y-5 py-4">
+      <div>
+        <div class="text-xs text-slate-400 font-bold mb-1">DESTINATION / PLACE</div>
+        <h2 id="taxiPlaceName" class="text-3xl sm:text-4xl font-black leading-tight text-white break-words"></h2>
+      </div>
+      <div class="bg-slate-900 border border-slate-700 rounded-2xl p-4 space-y-2">
+        <div class="text-xs text-amber-400 font-bold">INDIRIZZO (ADDRESS)</div>
+        <p id="taxiPlaceAddr" class="text-xl sm:text-2xl font-bold text-slate-100 leading-snug select-all"></p>
+        <button onclick="copyTaxiAddress()" class="mt-2 h-10 px-4 rounded-xl bg-slate-800 text-xs font-bold text-amber-300 border border-slate-700">📋 주소 복사하기</button>
+      </div>
+      <div id="taxiMetaBox" class="bg-slate-900/70 border border-slate-800 rounded-2xl p-4 space-y-1">
+        <div class="text-xs text-slate-400 font-bold">RESERVATION / NOTE</div>
+        <p id="taxiPlaceMeta" class="text-lg font-bold text-emerald-400"></p>
+      </div>
+    </div>
+    <a id="taxiGoogleMapsBtn" href="#" target="_blank" rel="noopener" class="w-full h-14 rounded-2xl bg-blue-600 text-white font-extrabold text-base flex items-center justify-center gap-2 shadow-lg">
+      <span>Google Maps 내비게이션 열기 ↗</span>
+    </a>
+  </div>
+
+  <!-- MODAL 4: MORE MENU -->
+  <div id="moreMenuModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-end justify-center" onclick="if(event.target===this) closeMoreMenu()">
+    <div class="bg-white w-full sm:max-w-md rounded-t-2xl p-4 space-y-3 safe-pb shadow-2xl">
+      <div class="w-10 h-1.5 bg-slate-300 rounded-full mx-auto"></div>
+      <div class="flex items-center justify-between">
+        <h3 class="font-extrabold text-base text-slate-900">여행 플래너 설정 · 공유 · 팁</h3>
+        <button onclick="closeMoreMenu()" class="w-9 h-9 rounded-full bg-slate-100 font-bold text-slate-600">✕</button>
+      </div>
+      <div id="moreCityTipsBox" class="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-1.5">
+        <div class="text-xs font-extrabold text-amber-900" id="moreCityTipsTitle">💡 연말연시 운영 체크포인트</div>
+        <ul id="moreCityTipsList" class="text-xs text-amber-900 space-y-1 list-disc pl-4"></ul>
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <button onclick="closeMoreMenu(); openFirebaseModal();" class="h-12 px-3 rounded-xl bg-slate-900 text-white font-bold text-xs flex items-center justify-center gap-1.5">☁️ 실시간 동기화</button>
+        <button onclick="copyShareLink()" class="h-12 px-3 rounded-xl bg-blue-600 text-white font-bold text-xs flex items-center justify-center gap-1.5">🔗 가족 공유 링크</button>
+        <button onclick="exportJsonBackup()" class="h-11 px-3 rounded-xl bg-slate-100 text-slate-800 font-bold text-xs">💾 JSON 백업 저장</button>
+        <label class="h-11 px-3 rounded-xl bg-slate-100 text-slate-800 font-bold text-xs flex items-center justify-center cursor-pointer">
+          📂 JSON 불러오기
+          <input type="file" accept=".json" class="hidden" onchange="importJsonBackup(event)" />
+        </label>
+      </div>
+      <button onclick="resetAllData()" class="w-full h-11 rounded-xl border border-rose-200 text-rose-600 font-bold text-xs">🔄 전체 선택·등록 내역 초기화</button>
+    </div>
+  </div>
+
+  <!-- MODAL 5: FIREBASE REAL-TIME SYNC CONFIG -->
+  <div id="firebaseModal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-end sm:items-center justify-center">
+    <div class="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl p-4 space-y-3 safe-pb shadow-2xl">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-2">
+        <h3 class="font-extrabold text-base text-slate-900">☁️ Firebase 실시간 공동편집 연결</h3>
+        <button onclick="closeFirebaseModal()" class="w-9 h-9 rounded-full bg-slate-100 font-bold text-slate-600">✕</button>
+      </div>
+      <p class="text-xs text-slate-600 leading-relaxed">
+        Firebase 프로젝트 설정 → <b>일반</b> 탭 맨 아래 <b>내 앱(웹)</b>의 <code>firebaseConfig</code> 코드를 그대로 붙여넣으면 가족 모두 실시간으로 같은 일정을 보고 수정할 수 있습니다.
+      </p>
+      <div>
+        <label class="block text-xs font-bold text-slate-600 mb-1">가족 여행 방 ID</label>
+        <input id="fbRoomInput" type="text" value="italy-2026-family" class="w-full h-10 px-3 rounded-xl border border-slate-300 font-mono text-sm" />
+      </div>
+      <div>
+        <label class="block text-xs font-bold text-slate-600 mb-1">firebaseConfig 붙여넣기</label>
+        <textarea id="fbConfigInput" rows="5" placeholder='const firebaseConfig = { apiKey: "...", projectId: "..." };' class="w-full p-2.5 rounded-xl border border-slate-300 font-mono text-xs"></textarea>
+      </div>
+      <div class="flex gap-2">
+        <button onclick="disconnectFirebase()" class="h-11 px-3 rounded-xl bg-slate-100 text-slate-600 font-bold text-xs">연결 해제</button>
+        <button onclick="saveFirebaseConfig()" class="flex-1 h-11 rounded-xl bg-emerald-600 text-white font-bold text-sm">연결 및 실시간 동기화 시작</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="hidden fixed top-14 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 text-white px-4 py-2.5 rounded-full text-xs font-bold shadow-xl whitespace-nowrap"></div>
+
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyB_TgmU-CuWbBF9yYvCSgLtXKKM9czPUmc",
+  authDomain: "italyfamilytrip-26173.firebaseapp.com",
+  projectId: "italyfamilytrip-26173",
+  storageBucket: "italyfamilytrip-26173.firebasestorage.app",
+  messagingSenderId: "286186779311",
+  appId: "1:286186779311:web:700b6ae4afb8e0d8bf5a5a",
+  measurementId: "G-GFH2XSPTZZ"
+};
+
+const BASE_CITIES = {"milan":{"id":"milan","name":"밀라노","dates":"12/30(수) ~ 1/1(금)","dateOptions":["12/30 (수)","12/31 (목)","1/1 (금)"],"center":[45.4685,9.182],"zoom":13,"tips":["12/31(목): 두오모·박물관·백화점은 16:00~19:00 조기 마감, 저녁은 연말 특선(Cenone) 사전 예약 필수.","1/1(금): 대부분 상점·박물관 휴무 → 오전에 밀라노 첸트랄레 역에서 베네치아행 고속열차 이동 권장."],"zones":[{"id":"A","name":"A존 · 도심 핵심","color":"#EF4444","center":[45.4655,9.19]},{"id":"B","name":"B존 · 서부 역사/과학","color":"#3B82F6","center":[45.4675,9.175]},{"id":"C","name":"C존 · 서북부 스포츠/모던","color":"#10B981","center":[45.4785,9.148]},{"id":"D","name":"D존 · 북부 트렌드/차이나","color":"#8B5CF6","center":[45.483,9.185]},{"id":"E","name":"추가 거점 · 노포/운하/역","color":"#F97316","center":[45.472,9.204]}],"places":[{"id":"mil_a1","zone":"A","name":"밀라노 대성당 (Duomo di Milano)","cat":"명소","lat":45.4641,"lng":9.1919,"addr":"Piazza del Duomo, 20122 Milano MI","why":"밀라노 모든 동선의 기준점이자 필수 랜드마크","charm":"엘리베이터로 올라가는 지붕 테라스에서 135개 첨탑과 황금 마리아상을 눈높이에서 감상","holiday":"12/31 조기 마감(16시 전후), 1/1 단축 운영","selected":true,"day":"12/31 (목)","time":"15:30","status":"예약 필수","memo":"테라스 엘리베이터 티켓 권장"},{"id":"mil_a2","zone":"A","name":"비토리오 에마누엘레 2세 갤러리아","cat":"명소","lat":45.4658,"lng":9.19,"addr":"Piazza del Duomo, 20123 Milano MI","why":"겨울 추위와 휴무에 구애받지 않는 실내 아케이드","charm":"거대한 유리 돔 천장과 중앙 황소 모자이크 위 발뒤꿈치 한 바퀴 소원 의식","holiday":"24시간 상시 개방 (야경 산책 최적)","selected":true,"day":"12/31 (목)","time":"16:45","status":"워크인","memo":""},{"id":"mil_a3","zone":"A","name":"리나센테 백화점 7층 푸드홀","cat":"쇼핑","lat":45.4651,"lng":9.1924,"addr":"Piazza del Duomo, 20121 Milano MI","why":"쾌적한 실내에서 유명 초콜릿·파네토네 비교 구매","charm":"7층 테라스 카페에서 두오모 첨탑을 정면으로 보며 즐기는 커피 타임","holiday":"12/31 19:00 조기 폐점, 1/1 휴무","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"mil_a4","zone":"A","name":"루이니 (Luini Panzerotti)","cat":"카페/간식","lat":45.4664,"lng":9.1914,"addr":"Via Santa Radegonda, 16, 20121 Milano MI","why":"1888년부터 줄 서서 먹는 밀라노 대표 국민 간식","charm":"갓 튀긴 반달 피자빵 속 뜨거운 토마토와 모차렐라 치즈의 조화","holiday":"12/31 오후 조기 마감 주의, 1/1 휴무","selected":true,"day":"12/31 (목)","time":"17:15","status":"워크인","memo":"클래식 토마토&모차렐라 추천"},{"id":"mil_a5","zone":"A","name":"스폰티니 (Spontini Duomo)","cat":"식당","lat":45.4659,"lng":9.1926,"addr":"Via Santa Radegonda, 11, 20121 Milano MI","why":"1인 6~8유로대로 빠르고 든든한 가성비 조각 피자","charm":"바닥은 바삭하고 위는 카스텔라처럼 폭신한 도우 위 치즈 폭포","holiday":"연말연시 비교적 늦게까지 영업","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"mil_a6","zone":"A","name":"마르케시 1824 (Marchesi 1824)","cat":"카페/간식","lat":45.4655,"lng":9.1901,"addr":"Galleria Vittorio Emanuele II, 20121 Milano MI","why":"200년 전통 밀라노 최고급 페이스트리 카페","charm":"갤러리아를 내려다보는 민트색 인테리어와 피스타치오 크루아상·파네토네","holiday":"12/31 조기 마감 확인 필요","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"mil_a7","zone":"A","name":"스타벅스 리저브 로스터리 밀라노","cat":"카페/간식","lat":45.4648,"lng":9.1862,"addr":"Piazza Cordusio, 3, 20123 Milano MI","why":"유럽 1호점이자 세계에서 가장 화려한 스타벅스","charm":"옛 우체국 대리석 홀 중앙의 황동 로스팅 설비와 화덕 피자·질소 젤라또","holiday":"연중무휴 (12/31 단축 영업)","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"mil_a8","zone":"A","name":"펙 (Peck)","cat":"쇼핑","lat":45.4633,"lng":9.1873,"addr":"Via Spadari, 9, 20123 Milano MI","why":"1883년 개업 밀라노 최고급 미식 델리 숍","charm":"트러플 버터, 파르미지아노 치즈, 프로슈토 진공 포장 선물 구매","holiday":"12/31 오후 마감, 1/1 휴무","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"mil_a9","zone":"A","name":"키코 밀라노 & 비알레띠 스토어","cat":"쇼핑","lat":45.4643,"lng":9.1885,"addr":"Via Torino, 20123 Milano MI","why":"가성비 국민 화장품과 모카포트 본고장 한정판 쇼핑","charm":"5~15유로대 선물용 립·핸드크림과 콜라보 모카포트 디자인","holiday":"1/2 겨울 정기 세일(Saldi) 개시 전","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"mil_a10","zone":"A","name":"AC밀란 & 인터밀란 공식 메가스토어","cat":"쇼핑","lat":45.4668,"lng":9.1892,"addr":"Galleria San Carlo / Via Dante, Milano MI","why":"산 시로 투어와 연계한 아드님 맞춤 축구 굿즈 쇼핑","charm":"최신 유니폼 즉석 이름·등번호 마킹 및 머플러·미니볼","holiday":"12/31 18시경 마감, 1/1 휴무","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"mil_a11","zone":"A","name":"브레라 지구 (Brera)","cat":"명소","lat":45.472,"lng":9.1878,"addr":"Via Brera, 28, 20121 Milano MI","why":"밀라노 예술가 감성이 살아있는 아기자기한 골목","charm":"돌바닥 거리, 앤티크 숍, 갤러리 산책으로 가족 힐링","holiday":"거리 산책 상시 가능","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"mil_b1","zone":"B","name":"산타 마리아 델레 그라치에 (최후의 만찬)","cat":"명소","lat":45.4659,"lng":9.1709,"addr":"Piazza di Santa Maria delle Grazie, 20123 Milano MI","why":"밀라노 방문 1순위 핵심 걸작 관람","charm":"소수 인원으로 15분간 다빈치 진품을 고요히 마주하는 압도적 현장감","holiday":"20~30분 전 바우처 실물 교환 필수, 1/1 휴관","selected":true,"day":"12/31 (목)","time":"14:00","status":"예약 필수","memo":"여권 지참 및 25분 전 매표소 도착"},{"id":"mil_b2","zone":"B","name":"스포르체스코 성 & 셈피오네 공원","cat":"명소","lat":45.4705,"lng":9.1793,"addr":"Piazza Castello, 20121 Milano MI","why":"최후의 만찬 성당에서 도보 10분 인접 역사 유적","charm":"붉은 벽돌 성벽과 분수 광장, 뒤편 공원 산책로가 탁 트여 쾌적함","holiday":"야외 광장·성벽 통행 자유","selected":true,"day":"12/31 (목)","time":"14:45","status":"워크인","memo":""},{"id":"mil_b3","zone":"B","name":"레오나르도 다빈치 과학기술박물관","cat":"명소","lat":45.4626,"lng":9.1706,"addr":"Via San Vittore, 21, 20123 Milano MI","why":"아이들에게 반응이 가장 좋은 체험형 과학·발명 박물관","charm":"다빈치 발명 모형과 야외에 전시된 실제 잠수함·증기기관차 스케일","holiday":"12/31 단축 운영, 1/1 휴관","selected":false,"day":"","time":"","status":"예약 필수","memo":""},{"id":"mil_b4","zone":"B","name":"미스쿠시 카도르나 (Miscusi)","cat":"식당","lat":45.4682,"lng":9.1763,"addr":"Piazzale Luigi Cadorna, 20123 Milano MI","why":"10~15유로대 생면 파스타를 넓고 쾌적하게 즐기는 캐주얼 식당","charm":"매일 뽑는 생면과 소스를 취향대로 고를 수 있어 4인 가족 만족도 높음","holiday":"B존 관람 직후 점심/이른 저녁 연계 최적","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"mil_c1","zone":"C","name":"산 시로 경기장 (Stadio San Siro)","cat":"명소","lat":45.4781,"lng":9.124,"addr":"Piazzale Angelo Moratti, 20151 Milano MI","why":"AC밀란·인터밀란 홈구장, 아드님과 함께하는 스포츠 성지","charm":"선수 라커룸, 터널을 지나 그라운드 코앞까지 걸어 나가는 스타디움 투어","holiday":"12/31 오전 타임 권장(오후 조기 마감), 1/1 휴관","selected":true,"day":"12/31 (목)","time":"09:30","status":"예약 필수","memo":"오전 첫 타임 투어 후 점심 이동"},{"id":"mil_c2","zone":"C","name":"시티라이프 쇼핑 디스트릭트","cat":"명소","lat":45.4776,"lng":9.1558,"addr":"Piazza Tre Torri, 20145 Milano MI","why":"자하 하디드 등이 설계한 밀라노 최신 현대 건축 단지","charm":"미래적인 곡선 빌딩과 쾌적한 실내 몰·푸드코트","holiday":"12/31 18~19시 조기 폐점","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"mil_c3","zone":"C","name":"Mani in Pasta (Procida 지점)","cat":"식당","lat":45.481,"lng":9.1636,"addr":"Via Giovanni Procida, 29, 20149 Milano MI","why":"산 시로 경기장과 도심 사이 완벽한 위치의 가족 맛집","charm":"쫄깃한 나폴리식 화덕피자와 해산물 파스타, 쾌적한 홀","holiday":"산 시로 투어 직후 12시 점심 동선 최적","selected":true,"day":"12/31 (목)","time":"12:00","status":"예약 필수","memo":"Procida 지점으로 예약 확인"},{"id":"mil_d1","zone":"D","name":"보스코 베르티칼레 & 가에 아울렌티 광장","cat":"명소","lat":45.4858,"lng":9.1904,"addr":"Via Gaetano de Castillia, 11, 20124 Milano MI","why":"외벽에 수백 그루 나무가 심어진 세계적 '수직 숲' 건축물","charm":"미래적인 고층 빌딩 숲과 원형 분수 광장의 야경","holiday":"야외 광장 상시 관람 가능","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"mil_d2","zone":"D","name":"10 꼬르소 꼬모 (10 Corso Como)","cat":"쇼핑","lat":45.482,"lng":9.1878,"addr":"Corso Como, 10, 20154 Milano MI","why":"전 세계 편집숍의 원조격 공간, 디자인 감각의 정수","charm":"감각적인 디자인 문구·소품과 담쟁이덩굴 안뜰 정원 포토존","holiday":"12/31 조기 마감, 1/1 휴무","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"mil_d3","zone":"D","name":"이탈리 밀라노 스메랄도 (Eataly)","cat":"쇼핑","lat":45.4804,"lng":9.1872,"addr":"Piazza XXV Aprile, 10, 20121 Milano MI","why":"이탈리아 프리미엄 식재료를 한곳에 모은 대형 테마 마켓","charm":"트러플 오일, 발사믹, 파스타 면 쇼핑 및 1층 베이커리·카페","holiday":"12/31 19시경 마감","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"mil_d4","zone":"D","name":"라비올레리아 사르피 (Ravioleria Sarpi)","cat":"카페/간식","lat":45.4816,"lng":9.1783,"addr":"Via Paolo Sarpi, 27, 20154 Milano MI","why":"느끼함을 한 번에 잡아주는 미슐랭 등재 수제 만두 맛집","charm":"오픈 키친에서 바로 빚어 굽는 육즙 가득 군만두와 소고기 전병","holiday":"길거리 테이크아웃 위주","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"mil_e1","zone":"E","name":"밀라노 첸트랄레 역 (Milano Centrale)","cat":"숙소/교통","lat":45.486,"lng":9.2041,"addr":"Piazza Duca d'Aosta, 1, 20124 Milano MI","why":"베네치아행 트레니탈리아 고속열차 출발 거점","charm":"웅장한 석조 아치 역사, 출발 20분 전 전광판 플랫폼 확인","holiday":"1/1 정상 운행","selected":true,"day":"1/1 (금)","time":"10:30","status":"예약 완료","memo":"베네치아 산타루치아역행 탑승"},{"id":"mil_e2","zone":"E","name":"Trattoria Masuelli San Marco","cat":"식당","lat":45.4589,"lng":9.2173,"addr":"Viale Umbria, 80, 20135 Milano MI","why":"1921년부터 이어온 정통 밀라노 가정식 노포","charm":"사프란 리조또와 오소부코(송아지 정강이 찜)를 4인 가족이 쉐어하기 최적","holiday":"12/31 저녁은 연말 코스 예약 필수","selected":false,"day":"","time":"","status":"예약 필수","memo":""},{"id":"mil_e3","zone":"E","name":"나빌리오 운하 지구 (Navigli)","cat":"명소","lat":45.4517,"lng":9.1731,"addr":"Alzaia Naviglio Grande, 20144 Milano MI","why":"해 진 뒤 연말 조명과 야경 산책을 즐기기 가장 좋은 운하 거리","charm":"다빈치가 설계에 참여한 운하 양옆 아페리티보 펍과 반짝이는 조명","holiday":"12/31 저녁 산책 및 카운트다운 분위기","selected":false,"day":"","time":"","status":"워크인","memo":""}]},"venice":{"id":"venice","name":"베네치아","dates":"1/1(금) ~ 1/3(일)","dateOptions":["1/1 (금)","1/2 (토)","1/3 (일)"],"center":[45.4375,12.332],"zoom":14,"tips":["1/1(금) 오후 도착: 성당·박물관 휴관이 많으므로 리알토 다리·산마르코 광장 야외 산책과 젤라또·곤돌라 중심 배치.","1/2(토): 이탈리아 겨울 정기 세일(Saldi) 개시일! 바포레토 24/48시간권으로 부라노섬 & 본섬 핵심 관람."],"zones":[{"id":"A","name":"A존 · 산마르코 중심","color":"#EF4444","center":[45.4342,12.3385]},{"id":"B","name":"B존 · 리알토 & 산폴로","color":"#3B82F6","center":[45.438,12.3358]},{"id":"C","name":"C존 · 도르소두로 예술지구","color":"#10B981","center":[45.431,12.328]},{"id":"D","name":"D존 · 산타루치아 & 부라노","color":"#8B5CF6","center":[45.441,12.321]}],"places":[{"id":"ven_a1","zone":"A","name":"산마르코 대성당 & 광장","cat":"명소","lat":45.4345,"lng":12.3397,"addr":"Piazza San Marco, 328, 30124 Venezia VE","why":"베네치아 심장부이자 황금 모자이크의 비잔틴 걸작","charm":"대성당 내부 황금 제단화와 2층 테라스에서 내려다보는 산마르코 광장 전경","holiday":"1/1 오후 미사/관광 제한 확인, 1/2 오전 스킵더라인 권장","selected":true,"day":"1/2 (토)","time":"09:30","status":"예약 필수","memo":"백팩 반입 금지(인근 무료 보관소 이용)"},{"id":"ven_a2","zone":"A","name":"두칼레 궁전 & 탄식의 다리","cat":"명소","lat":45.4337,"lng":12.3404,"addr":"Piazza San Marco, 1, 30124 Venezia VE","why":"베네치아 공화국 총독의 화려한 궁전과 감옥을 잇는 역사 코스","charm":"세계 최대 유화 '천국'이 걸린 대평의회실과 탄식의 다리 내부 통과 체험","holiday":"1/1 개관 단축 가능, 1/2 통합권 입장 추천","selected":true,"day":"1/2 (토)","time":"11:00","status":"예약 필수","memo":""},{"id":"ven_a3","zone":"A","name":"라 페니체 극장 (Teatro La Fenice)","cat":"명소","lat":45.4336,"lng":12.334,"addr":"Campo San Fantin, 1965, 30124 Venezia VE","why":"'불사조'라는 이름의 세계 3대 오페라 극장","charm":"화려한 금빛 로코코 객석과 로열 박스를 오디오 가이드로 둘러보는 투어","holiday":"1/1 신년 음악회 당일은 투어 제한","selected":false,"day":"","time":"","status":"예약 필수","memo":""},{"id":"ven_a4","zone":"A","name":"카페 플로리안 (Caffè Florian)","cat":"카페/간식","lat":45.4338,"lng":12.3381,"addr":"Piazza San Marco, 57, 30124 Venezia VE","why":"1720년 개업한 세계에서 가장 오래된 카페","charm":"화려한 프레스코화 룸에서 마시는 진한 핫초코와 에스프레소","holiday":"연중무휴 (테라스 라이브 연주 시 자릿세 부과)","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"ven_a5","zone":"A","name":"달 모로 (Dal Moro's) 테이크아웃 파스타","cat":"식당","lat":45.4363,"lng":12.3387,"addr":"Calle Casseleria, 5324, 30122 Venezia VE","why":"산마르코 인근에서 8~10유로대로 즐기는 가성비 생면 파스타","charm":"주문 즉시 뽑아 삶은 생면 파스타를 박스에 담아 먹물·라구 소스로 즐김","holiday":"테이크아웃 전문이라 4인 가족 간편 식사로 유용","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"ven_a6","zone":"A","name":"무라노 유리공예 & 베네치아 가면 상점","cat":"쇼핑","lat":45.4352,"lng":12.3372,"addr":"Mercerie / Calle Larga XXII Marzo, Venezia VE","why":"베네치아 전통 수공예 기념품 거리","charm":"장인 인증 스티커가 붙은 무라노 유리 액세서리와 카니발 가면","holiday":"1/2 겨울 세일 시작","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"ven_b1","zone":"B","name":"리알토 다리 (Ponte di Rialto)","cat":"명소","lat":45.438,"lng":12.3358,"addr":"Sestiere San Polo, 30125 Venezia VE","why":"대운하를 가로지르는 베네치아 최고의 포토 스팟","charm":"다리를 오가는 수상버스·곤돌라와 대운하 양옆 귀족 저택의 황홀한 풍경","holiday":"1/1 도착 직후 일몰·야경 산책 1순위","selected":true,"day":"1/1 (금)","time":"16:30","status":"워크인","memo":"일몰 16:45 전후 야경 촬영"},{"id":"ven_b2","zone":"B","name":"수소 젤라또 (Suso Gelatoteca)","cat":"카페/간식","lat":45.4373,"lng":12.3367,"addr":"Sotoportego de la Bissa, 5453, 30124 Venezia VE","why":"리알토 다리 바로 옆 베네치아 1위 젤라또 명소","charm":"시그니처 '마넷(Manet - 피스타치오&헤이즐넛)'과 진한 다크초콜릿 젤라또","holiday":"겨울에도 줄 서서 먹는 필수 간식","selected":true,"day":"1/1 (금)","time":"17:00","status":"워크인","memo":""},{"id":"ven_b3","zone":"B","name":"리알토 어시장 & 치케티 골목","cat":"식당","lat":45.4391,"lng":12.3342,"addr":"Campo de la Pescaria, 30125 Venezia VE","why":"베네치아 전통 타파스 '치케티(Cicchetti)'와 해산물 체험","charm":"바게트 위에 대구 크림(바칼라 만테카토)·새우를 올린 한입 요리 투어","holiday":"어시장은 일·월 휴무, 주변 바카로(선술집)는 저녁 활기","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"ven_b4","zone":"B","name":"오스테리아 알 포트 (Osteria Al Portego)","cat":"식당","lat":45.4378,"lng":12.3396,"addr":"Calle de la Malvasia, 6014, 30122 Venezia VE","why":"합리적 가격의 베네치아식 먹물 파스타와 치케티 맛집","charm":"현지인과 여행자가 어우러지는 아늑한 오스테리아 분위기","holiday":"식사 시간대 오픈런 권장","selected":true,"day":"1/1 (금)","time":"18:30","status":"워크인","memo":"오징어 먹물 스파게티 추천"},{"id":"ven_b5","zone":"B","name":"아쿠아 알타 서점 (Libreria Acqua Alta)","cat":"쇼핑","lat":45.4377,"lng":12.3422,"addr":"Calle Lunga Santa Maria Formosa, 5176b, Venezia VE","why":"침수(아쿠아 알타)를 피해 곤돌라와 욕조에 책을 쌓아둔 이색 서점","charm":"헌책으로 쌓아 만든 책 계단 포토존과 고양이 마스코트, 빈티지 엽서","holiday":"오후 7시경 마감","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"ven_c1","zone":"C","name":"아카데미아 다리 (Ponte dell'Accademia)","cat":"명소","lat":45.4316,"lng":12.3289,"addr":"Campo Santo Stefano / Dorsoduro, Venezia VE","why":"산타 마리아 델라 살루테 성당과 대운하가 한 프레임에 담기는 뷰포인트","charm":"나무 아치 다리 위에서 바라보는 베네치아의 가장 회화적인 일몰","holiday":"상시 통행 가능","selected":true,"day":"1/2 (토)","time":"16:30","status":"워크인","memo":""},{"id":"ven_c2","zone":"C","name":"페기 구겐하임 컬렉션","cat":"명소","lat":45.4307,"lng":12.3315,"addr":"Dorsoduro, 701-704, 30123 Venezia VE","why":"피카소·달리·폴록 등 20세기 현대미술 걸작을 모은 운하 변 저택 미술관","charm":"대운하 테라스 조각 정원과 아이들도 흥미로워하는 현대미술 작품들","holiday":"화요일 휴관, 1/1 휴관 가능","selected":false,"day":"","time":"","status":"예약 필수","memo":""},{"id":"ven_c3","zone":"C","name":"오스테리아 알 스쿠에로 (Osteria al Squero)","cat":"식당","lat":45.4306,"lng":12.3259,"addr":"Dorsoduro, 943-944, 30123 Venezia VE","why":"곤돌라 수리 조선소(스쿠에로)를 바로 앞에서 보며 즐기는 치케티 명소","charm":"운하 난간에 서서 1개 2~3유로대 수제 크로스티니와 스프리츠를 즐기는 낭만","holiday":"점심~저녁 이른 시간 방문 추천","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"ven_d1","zone":"D","name":"베네치아 산타루치아 역 (Venezia S. Lucia)","cat":"숙소/교통","lat":45.4411,"lng":12.321,"addr":"Fondamenta Santa Lucia, 30121 Venezia VE","why":"역사를 나서자마자 대운하가 펼쳐지는 베네치아 기차 관문","charm":"앞 선착장(Ferrovia)에서 바포레토(수상버스) 탑승 및 피렌체행 열차 출발","holiday":"1/3 피렌체 산타마리아노벨라역행 출발","selected":true,"day":"1/3 (일)","time":"10:30","status":"예약 완료","memo":"피렌체행 열차 탑승"},{"id":"ven_d2","zone":"D","name":"부라노 섬 (Burano - 아이유 뮤비 촬영지)","cat":"명소","lat":45.4854,"lng":12.4167,"addr":"Isola di Burano, 30142 Venezia VE","why":"동화 속 알록달록한 원색 집들이 운하를 따라 늘어선 사진 천국","charm":"바포레토 12번(폰다멘테 노베 출발 약 40분)으로 떠나는 반나절 섬 투어","holiday":"겨울 바닷바람 대비 방한복 필수","selected":true,"day":"1/2 (토)","time":"13:30","status":"워크인","memo":"바포레토 24시간권 활용"},{"id":"ven_d3","zone":"D","name":"베니스 레더 & 수제 노트 공방","cat":"쇼핑","lat":45.4395,"lng":12.3265,"addr":"Lista di Spagna / Cannaregio, Venezia VE","why":"마블링 종이로 만든 수제 다이어리와 가죽 북커버 쇼핑","charm":"베네치아 전통 인쇄 기법의 책갈피·다이어리 선물","holiday":"1/2 세일 기간 소품 할인","selected":false,"day":"","time":"","status":"워크인","memo":""}]},"florence":{"id":"florence","name":"피렌체","dates":"1/3(일) ~ 1/5(화)","dateOptions":["1/3 (일)","1/4 (월)","1/5 (화)"],"center":[43.7715,11.2545],"zoom":14,"tips":["1/3(일)은 매월 첫째 주 일요일(Domenica al Museo)로 우피치 미술관·피티 궁전이 무료 개방! 단, 예약 불가·현장 대기 줄이 길어 오픈런 필수.","1/4(월)은 우피치·아카데미아 정기 휴관일 → 월요일에 근교 더 몰(The Mall) 아울렛을 배치하는 것이 황금 동선!"],"zones":[{"id":"A","name":"A존 · 두오모 & 산로렌초","color":"#EF4444","center":[43.7735,11.2555]},{"id":"B","name":"B존 · 시뇨리아 & 우피치","color":"#3B82F6","center":[43.7685,11.2555]},{"id":"C","name":"C존 · 산타마리아노벨라 & 산토스피리토","color":"#10B981","center":[43.771,11.247]},{"id":"D","name":"D존 · 미켈란젤로 언덕 & 근교 아울렛","color":"#8B5CF6","center":[43.7629,11.265]}],"places":[{"id":"flo_a1","zone":"A","name":"피렌체 두오모 (산타 마리아 델 피오레)","cat":"명소","lat":43.7731,"lng":11.256,"addr":"Piazza del Duomo, 50122 Firenze FI","why":"르네상스의 상징 브루넬레스키 붉은 돔과 대리석 외관","charm":"조토의 종탑 또는 쿠폴라에 올라 피렌체 붉은 지붕 파노라마 조망","holiday":"일요일 대성당 미사 시간 관광 제한, 쿠폴라·종탑은 사전 예약 필수","selected":true,"day":"1/3 (일)","time":"14:00","status":"예약 필수","memo":"조토의 종탑 오후 타임 추천"},{"id":"flo_a2","zone":"A","name":"산 로렌초 중앙시장 & 가죽시장","cat":"식당","lat":43.7764,"lng":11.2535,"addr":"Piazza del Mercato Centrale, 50123 Firenze FI","why":"2층 푸드코트에서 4인 가족이 각자 취향대로 고르는 만능 미식 공간","charm":"화덕피자, 트러플 파스타, 곱창버거(람프레도토), 티본스테이크까지 한자리 해결","holiday":"연중무휴 늦게까지 영업 (식사 실패 없는 안전지대)","selected":true,"day":"1/3 (일)","time":"12:30","status":"워크인","memo":"피렌체 도착 직후 첫 점심 최적"},{"id":"flo_a3","zone":"A","name":"Trattoria L'Oriuolo","cat":"식당","lat":43.7718,"lng":11.2591,"addr":"Via dell'Oriuolo, 58R, 50122 Firenze FI","why":"기저장하신 피렌체 로컬 트라토리아 맛집","charm":"토스카나 전통 파스타와 합리적인 가격의 스테이크·와인","holiday":"저녁 방문 시 사전 예약 권장","selected":false,"day":"","time":"","status":"예약 필수","memo":""},{"id":"flo_a4","zone":"A","name":"Il Grande Nuti Trattoria","cat":"식당","lat":43.7755,"lng":11.2547,"addr":"Borgo San Lorenzo, 22-24/r, 50123 Firenze FI","why":"기저장하신 두오모~중앙시장 사이 접근성 좋은 트라토리아","charm":"비스테카 알라 피오렌티나(티본스테이크)와 피치 파스타","holiday":"가족 단위 식사하기 편한 넓은 홀","selected":false,"day":"","time":"","status":"예약 필수","memo":""},{"id":"flo_a5","zone":"A","name":"에두아르도 젤라또 (Edoardo)","cat":"카페/간식","lat":43.7726,"lng":11.2557,"addr":"Piazza del Duomo, 45/R, 50122 Firenze FI","why":"두오모 바로 앞 유기농 수제 젤라또 & 즉석 구운 와플 콘","charm":"고소한 와플 콘 굽는 냄새와 진한 피스타치오·티라미수 젤라또","holiday":"연중무휴","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"flo_a6","zone":"A","name":"피렌체 가죽 공방 거리 (San Lorenzo)","cat":"쇼핑","lat":43.7752,"lng":11.2542,"addr":"Via dell'Ariento / Piazza San Lorenzo, Firenze FI","why":"이탈리아 가죽 공예 본고장에서 만나는 가죽 재킷·가방·벨트","charm":"1/2 겨울 세일 기간 중 'Vera Pelle(천연가죽)' 각인 제품 득템","holiday":"흥정 가능, 공방 직영 매장 추천","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"flo_b1","zone":"B","name":"우피치 미술관 (Galleria degli Uffizi)","cat":"명소","lat":43.7677,"lng":11.2553,"addr":"Piazzale degli Uffizi, 6, 50122 Firenze FI","why":"보티첼리 '비너스의 탄생', 다빈치 등 르네상스 미술의 정점","charm":"아르노 강과 베키오 다리가 내려다보이는 복도 창가 뷰와 명화 감상","holiday":"★1/3(일) 첫째 주 일요일 무료 개방(오픈런) / ★1/4(월) 정기 휴관!","selected":true,"day":"1/3 (일)","time":"15:30","status":"예약 필수","memo":"1/3 무료 개방일 대기 확인 또는 1/5 오전 활용"},{"id":"flo_b2","zone":"B","name":"시뇨리아 광장 & 베키오 다리","cat":"명소","lat":43.768,"lng":11.2531,"addr":"Ponte Vecchio, 50125 Firenze FI","why":"지붕 없는 조각 미술관 시뇨리아 광장과 피렌체 최고령 다리","charm":"다리를 가득 메운 금세공 보석상과 아르노 강에 비치는 황금빛 야경","holiday":"상시 개방","selected":true,"day":"1/3 (일)","time":"17:15","status":"워크인","memo":""},{"id":"flo_b3","zone":"B","name":"Vini e Vecchi Sapori","cat":"식당","lat":43.7695,"lng":11.2564,"addr":"Via dei Magazzini, 3/r, 50122 Firenze FI","why":"기저장하신 피렌체 현지인 1티어 골목 오스테리아","charm":"칠판에 손글씨로 적힌 오늘의 메뉴, 오리 라구 파스타와 호박꽃 튀김","holiday":"일요일 휴무, 월~토 전화/방문 예약 필수","selected":true,"day":"1/4 (월)","time":"19:30","status":"예약 필수","memo":"일요일 휴무이므로 월요일 저녁 배치"},{"id":"flo_b4","zone":"B","name":"알안티코 비나이오 (All'Antico Vinaio)","cat":"카페/간식","lat":43.7686,"lng":11.2573,"addr":"Via dei Neri, 74r, 50122 Firenze FI","why":"전 세계 여행자가 줄 서서 먹는 피렌체 전설의 수제 파니니","charm":"갓 구운 포카치아 빵 속에 프로슈토, 트러플 크림, 피스타치오 치즈를 가득 채움","holiday":"테이크아웃 전문 (1개 크기가 커서 2인 1개 쉐어 가능)","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"flo_b5","zone":"B","name":"질리 카페 (Caffè Gilli - 레푸블리카 광장)","cat":"카페/간식","lat":43.7716,"lng":11.2541,"addr":"Via Roma, 1r, 50123 Firenze FI","why":"1733년 개업한 피렌체 최古의 클래식 티룸 & 베이커리","charm":"회전목마가 있는 레푸블리카 광장 옆에서 즐기는 티라미수와 카푸치노","holiday":"연중무휴","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"flo_c1","zone":"C","name":"Trattoria Sostanza (트로이아)","cat":"식당","lat":43.7722,"lng":11.2458,"addr":"Via del Porcellana, 25/R, 50123 Firenze FI","why":"기저장하신 버터 치킨과 티본스테이크의 성지 (1869년 개업)","charm":"지글지글 끓는 팬에 나오는 시그니처 버터 치킨(Petto di pollo al burro)과 아티초크 파이","holiday":"일요일 휴무, 19:30 / 21:30 2부제 사전 예약 필수","selected":true,"day":"1/4 (월)","time":"19:30","status":"예약 필수","memo":"최소 2~3주 전 전화 예약"},{"id":"flo_c2","zone":"C","name":"산타 마리아 노벨라 약국 본점","cat":"쇼핑","lat":43.774,"lng":11.2477,"addr":"Via della Scala, 16, 50123 Firenze FI","why":"1221년 수도사들이 시작한 세계 최초 약국이자 피렌체 쇼핑 1순위","charm":"고풍스러운 박물관 같은 본점 인테리어와 프리지아 향수·장미수 토너·고체 왁스","holiday":"한국 면세점 대비 합리적 가격 + 택스리펀 가능","selected":true,"day":"1/4 (월)","time":"17:30","status":"워크인","memo":"여권 지참(택스리펀 서류 발급)"},{"id":"flo_c3","zone":"C","name":"피렌체 SMN 기차역 (Santa Maria Novella)","cat":"숙소/교통","lat":43.7764,"lng":11.2478,"addr":"Piazza della Stazione, 50123 Firenze FI","why":"베네치아 도착 및 로마행 고속열차 출발역","charm":"도심 도보 10분 거리의 최적 위치, 역사 내 약국·마트 편리","holiday":"1/5(화) 로마 테르미니역행 출발","selected":true,"day":"1/5 (화)","time":"10:30","status":"예약 완료","memo":"로마 테르미니행 탑승"},{"id":"flo_c4","zone":"C","name":"라 카라라이아 젤라또 (La Carraia)","cat":"카페/간식","lat":43.7689,"lng":11.2464,"addr":"Piazza Nazario Sauro, 25/r, 50124 Firenze FI","why":"현지인들이 꼽는 가성비·풍미 1위 젤라테리아","charm":"부드러운 리코타 치즈&배 맛, 다크초콜릿 젤라또를 2~3유로대에 즐김","holiday":"연중무휴","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"flo_d1","zone":"D","name":"미켈란젤로 언덕 (Piazzale Michelangelo)","cat":"명소","lat":43.7629,"lng":11.265,"addr":"Piazzale Michelangelo, 50125 Firenze FI","why":"피렌체 시내 전경과 두오모·베키오 다리를 한눈에 담는 최고의 전망대","charm":"해 질 녘 붉게 물드는 토스카나 하늘과 야경 버스킹","holiday":"12번·13번 버스 또는 도보 20분, 16:30 전후 도착 추천","selected":true,"day":"1/3 (일)","time":"16:30","status":"워크인","memo":"일몰 시간 맞춰 올라가기"},{"id":"flo_d2","zone":"D","name":"더 몰 피렌체 럭셔리 아울렛 (The Mall)","cat":"쇼핑","lat":43.7024,"lng":11.4644,"addr":"Via Europa, 8, 50066 Leccio Reggello FI","why":"구찌·프라다·버버리·몽클레어 등 이탈리아 명품 직영 아울렛 (겨울 세일 중복 할인!)","charm":"우피치 휴관일(1/4 월)에 직통 셔틀버스(약 45분)로 다녀오는 알찬 쇼핑 코스","holiday":"1/2 겨울 정기 세일 개시로 최대 할인 시즌","selected":true,"day":"1/4 (월)","time":"10:00","status":"워크인","memo":"SMN역 인근 셔틀버스 탑승 & 여권 지참"}]},"rome":{"id":"rome","name":"로마 (4박)","dates":"1/5(화) ~ 1/9(토)","dateOptions":["1/5 (화)","1/6 (수)","1/7 (목)","1/8 (금)","1/9 (토)"],"center":[41.898,12.482],"zoom":13,"tips":["1/6(수)은 이탈리아 공휴일 '주현절(Epifania)': 바티칸 박물관 휴관, 나보나 광장 주현절 마켓·축제 분위기 활발!","숙소(트레비 분수 인근 Vicolo Scanderbeg 112)가 도심 한가운데라 스페인 광장·판테온·나보나 광장 모두 도보 10~15분 내 이동 가능."],"zones":[{"id":"A","name":"A존 · 트레비·스페인·판테온 (숙소권)","color":"#EF4444","center":[41.901,12.482]},{"id":"B","name":"B존 · 콜로세움·포로 로마노","color":"#3B82F6","center":[41.8915,12.488]},{"id":"C","name":"C존 · 바티칸 & 천사의 성","color":"#10B981","center":[41.904,12.458]},{"id":"D","name":"D존 · 트라스테베레 미식지구","color":"#8B5CF6","center":[41.8895,12.4695]}],"places":[{"id":"rom_home","zone":"A","name":"로마 숙소 (트레비 분수 인근)","cat":"숙소/교통","lat":41.9004,"lng":12.4847,"addr":"Vicolo Scanderbeg, 112, 00187 Roma RM","why":"트레비 분수 도보 2분 거리의 최상급 중심지 베이스캠프","charm":"이른 아침 한산한 트레비 분수와 시내 주요 명소 도보 이동 최적","holiday":"셀프 체크인, 1/9(토) 오후 17:30경 공항 택시 출발","selected":true,"day":"1/5 (화)","time":"14:00","status":"예약 완료","memo":"Vicolo Scanderbeg 112"},{"id":"rom_a1","zone":"A","name":"트레비 분수 & 스페인 광장","cat":"명소","lat":41.9009,"lng":12.4833,"addr":"Piazza di Trevi, 00187 Roma RM","why":"숙소 바로 앞 로마의 상징과 야경 산책 코스","charm":"동전 던지기 의식과 스페인 계단·콘도티 명품 거리 산책","holiday":"인파가 몰리므로 이른 아침이나 밤 22시 이후 방문 추천","selected":true,"day":"1/5 (화)","time":"16:30","status":"워크인","memo":""},{"id":"rom_a2","zone":"A","name":"판테온 & 나보나 광장","cat":"명소","lat":41.8986,"lng":12.4769,"addr":"Piazza della Rotonda, 00186 Roma RM","why":"2천 년 전 완벽한 콘크리트 돔 건축과 바로크 분수 광장","charm":"천장 원형 구멍(오쿨루스)으로 쏟아지는 빛과 1/6 주현절 축제 광장","holiday":"판테온 유료 입장 전환(현장/온라인 구매)","selected":true,"day":"1/6 (수)","time":"10:30","status":"예약 필수","memo":"1/6 주현절 축제 나보나 광장 연계"},{"id":"rom_a3","zone":"A","name":"타짜 도로 & 산테우스타키오 커피","cat":"카페/간식","lat":41.8992,"lng":12.4781,"addr":"Via degli Orfani, 84, 00186 Roma RM","why":"판테온 옆 로마 3대 커피 명가, 원두 쇼핑 필수 코스","charm":"황금 에스프레소와 시그니처 커피 슬러시 '그라니타 디 카페'","holiday":"귀국 선물용 원두·분쇄 커피 구매 최적","selected":true,"day":"1/6 (수)","time":"11:45","status":"워크인","memo":"원두 선물 구매"},{"id":"rom_a4","zone":"A","name":"지올리띠 (Giolitti) 젤라또","cat":"카페/간식","lat":41.9012,"lng":12.4774,"addr":"Via degli Uffici del Vicario, 40, 00186 Roma RM","why":"1900년 개업한 로마 3대 젤라또 (영화 '로마의 휴일' 명소)","charm":"생크림(Panna)을 듬뿍 얹어 먹는 쌀(Riso)·수박·피스타치오 젤라또","holiday":"카운터에서 먼저 영수증 결제 후 주문","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"rom_a5","zone":"A","name":"폼피 티라미수 (Pompi - 스페인광장점)","cat":"카페/간식","lat":41.9056,"lng":12.4832,"addr":"Via della Croce, 82, 00187 Roma RM","why":"티라미수의 왕국으로 불리는 로마 대표 디저트 숍","charm":"클래식, 딸기, 피스타치오 티라미수를 테이크아웃해 숙소 간식으로 추천","holiday":"연중무휴","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"rom_a6","zone":"A","name":"아이에로 약국 (Farmacia Aiello) & 카스트로니","cat":"쇼핑","lat":41.9054,"lng":12.4785,"addr":"Via Cola di Rienzo / Via Condotti 인근, Roma RM","why":"로마 귀국 전 마지막 쇼핑(약국 화장품·트러플·발사믹·파스타)","charm":"1/2 겨울 세일 의류 쇼핑과 카스트로니 식료품점 특산품 일괄 구매","holiday":"1/9 출국 전날 쇼핑 마무리 최적","selected":true,"day":"1/8 (금)","time":"16:00","status":"워크인","memo":"택스리펀 영수증 여권 기준 통일"},{"id":"rom_b1","zone":"B","name":"콜로세움 & 포로 로마노 · 팔라티노 언덕","cat":"명소","lat":41.8902,"lng":12.4922,"addr":"Piazza del Colosseo, 1, 00184 Roma RM","why":"고대 로마 제국의 심장이자 4인 가족 로마 여행의 하이라이트","charm":"원형 경기장 내부 아레나와 고대 로마 원로원·신전 유적지 산책","holiday":"콜로세움 공식 사이트 시간 지정 티켓 사전 예매 필수","selected":true,"day":"1/6 (수)","time":"14:00","status":"예약 필수","memo":"여권 지참 및 지정 시간 15분 전 도착"},{"id":"rom_b2","zone":"B","name":"베네치아 광장 & 캄피돌리오 언덕","cat":"명소","lat":41.8957,"lng":12.4823,"addr":"Piazza Venezia, 00186 Roma RM","why":"트레비 숙소에서 포로 로마노로 걸어가는 길목의 웅장한 광장","charm":"미켈란젤로가 설계한 캄피돌리오 광장과 포로 로마노 무료 전망 포인트","holiday":"상시 개방","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"rom_b3","zone":"B","name":"진실의 입 (Bocca della Verità)","cat":"명소","lat":41.8881,"lng":12.4815,"addr":"Piazza della Bocca della Verità, 18, 00186 Roma RM","why":"아이들과 함께 기념사진 남기기 좋은 유쾌한 역사 명소","charm":"산타 마리아 인 코스메딘 성당 입구의 대리석 가면 포토존","holiday":"17:00 마감","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"rom_b4","zone":"B","name":"파스타 셰프 몬티 (Pasta Chef Monti)","cat":"식당","lat":41.8944,"lng":12.4926,"addr":"Via Baccina, 42, 00184 Roma RM","why":"콜로세움 인근에서 10유로대로 즐기는 가성비 수제 생면 파스타","charm":"카르보나라, 아마트리치아나, 카초 에 페페 등 로마 3대 파스타 정복","holiday":"점심 시간대 빠르고 알찬 식사 추천","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"rom_c1","zone":"C","name":"바티칸 박물관 & 시스티나 성당 · 성 베드로 대성당","cat":"명소","lat":41.9065,"lng":12.4536,"addr":"Viale Vaticano, 00165 Città del Vaticano","why":"미켈란젤로의 천지창조와 라파엘로 방을 만나는 인류 예술의 보고","charm":"오전 한국어 가이드 투어 또는 패스트트랙으로 반나절 집중 관람","holiday":"★1/6(수) 주현절 휴관 → 1/7(목) 또는 1/8(금) 오전 배치 필수!","selected":true,"day":"1/7 (목)","time":"09:00","status":"예약 필수","memo":"복장 규정(무릎·어깨 가림) 확인"},{"id":"rom_c2","zone":"C","name":"산탄젤로 성 (천사의 성)","cat":"명소","lat":41.9031,"lng":12.4663,"addr":"Lungotevere Castello, 50, 00193 Roma RM","why":"바티칸 관람 후 테베레 강변을 따라 걷기 좋은 원형 요새","charm":"천사 조각상이 늘어선 산탄젤로 다리와 옥상 테라스의 바티칸 전망","holiday":"바티칸 투어 직후 연계 최적","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"rom_c3","zone":"C","name":"피자리움 본치 (Pizzarium Bonci)","cat":"카페/간식","lat":41.9069,"lng":12.4464,"addr":"Via della Meloria, 43, 00136 Roma RM","why":"이탈리아 조각 피자의 신으로 불리는 가브리엘레 본치의 본점","charm":"72시간 발효 바삭한 도우 위에 감자·트러플·부라타 등 다채로운 토핑","holiday":"바티칸 박물관 출구에서 도보 10분","selected":false,"day":"","time":"","status":"워크인","memo":""},{"id":"rom_d1","zone":"D","name":"Tonnarello (톤나렐로 - 트라스테베레)","cat":"식당","lat":41.8894,"lng":12.4697,"addr":"Via della Paglia, 1/2/3, 00153 Roma RM","why":"기저장하신 로마 1위 파스타 & 미트볼 로컬 핫플레이스","charm":"프라이팬째 서빙되는 카르보나라·카초 에 페페와 활기찬 테라스 분위기","holiday":"예약 불가(현장 대기), 오픈 직후 12:00 또는 18:30 방문 시 대기 단축","selected":true,"day":"1/7 (목)","time":"18:30","status":"워크인","memo":"오픈런 또는 18:30 이른 저녁 추천"},{"id":"rom_d2","zone":"D","name":"트라스테베레 골목 & 산타 마리아 광장","cat":"명소","lat":41.8895,"lng":12.4705,"addr":"Piazza di Santa Maria in Trastevere, 00153 Roma RM","why":"로마에서 가장 정겹고 중세 골목 감성이 살아있는 저녁 산책지","charm":"담쟁이덩굴 건물과 노천 레스토랑, 황금 모자이크 성당의 따뜻한 분위기","holiday":"저녁 식사 전후 산책 코스로 최고","selected":true,"day":"1/7 (목)","time":"20:00","status":"워크인","memo":""},{"id":"rom_d3","zone":"D","name":"오탈레그 (Otaleg) 젤라또","cat":"카페/간식","lat":41.8886,"lng":12.4716,"addr":"Via di S. Cosimato, 14a, 00153 Roma RM","why":"'Gelato'를 거꾸로 쓴 이름의 트라스테베레 최고 수제 젤라또","charm":"원재료 본연의 깊은 맛을 살린 피스타치오·자바이오네·제철 과일 소르베","holiday":"톤나렐로 식사 후 디저트 코스로 도보 3분","selected":false,"day":"","time":"","status":"워크인","memo":""}]}};
+
+const TAB_ORDER = ["airport", "milan", "venice", "florence", "rome"];
+let currentTab = "milan";
+let viewMode = "all";
+let sortMode = "zone";
+let selectedZone = "ALL";
+let selectedCat = "ALL";
+let sheetState = "half";
+let showPolylines = true;
+let isSatelliteTile = false;
+
+let airportDirection = "arrival";
+let selectedTransport = { arrival: "taxi", departure: "taxi" };
+let ke932Time = "21:00";
+let airportChecks = { c1: false, c2: false, c3: false, c4: false, c5: false };
+
+let userState = {
+  overrides: {},
+  customPlaces: { milan: [], venice: [], florence: [], rome: [] },
+  airport: { selectedTransport: { arrival: "taxi", departure: "taxi" }, ke932Time: "21:00", checks: {} }
+};
+
+let map, tileLayer, markersLayer, linesLayer;
+let miniMap, miniMarker;
+let pendingLatLng = null, pendingZoneId = "A", pendingCat = "숙소/교통", pendingDay = "";
+let editingScheduleId = null, editingScheduleStatus = "예약 필수";
+let fbDb = null, fbUnsubscribe = null, isApplyingRemote = false;
+
+function showToast(msg) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.classList.remove("hidden");
+  clearTimeout(window._toastTimer);
+  window._toastTimer = setTimeout(() => el.classList.add("hidden"), 2400);
+}
+
+window.addEventListener("DOMContentLoaded", () => {
+  loadLocalState();
+  parseUrlParams();
+  initMainMap();
+  setupSheetDrag();
+  initFirebaseIfConfigured();
+  switchTab("milan");
+});
+
+function loadLocalState() {
+  try {
+    const raw = localStorage.getItem("italy_family_planner_v3");
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed.overrides) userState.overrides = parsed.overrides;
+      if (parsed.customPlaces) userState.customPlaces = Object.assign({ milan: [], venice: [], florence: [], rome: [] }, parsed.customPlaces);
+      if (parsed.airport) {
+        userState.airport = parsed.airport;
+        selectedTransport = parsed.airport.selectedTransport || selectedTransport;
+        ke932Time = parsed.airport.ke932Time || "21:00";
+        airportChecks = parsed.airport.checks || {};
+      }
+    }
+  } catch (e) {}
+}
+
+function saveState() {
+  userState.airport = { selectedTransport, ke932Time, checks: airportChecks };
+  try { localStorage.setItem("italy_family_planner_v3", JSON.stringify(userState)); } catch (e) {}
+  if (fbDb && !isApplyingRemote) {
+    const roomId = localStorage.getItem("italy_fb_room") || "italy-2026-family";
+    fbDb.collection("italyTrips").doc(roomId).set({ payload: JSON.stringify(userState), updatedAt: Date.now() }, { merge: true }).catch(() => {});
+  }
+}
+
+function parseUrlParams() {
+  const params = new URLSearchParams(window.location.search);
+  const fbParam = params.get("fb");
+  const roomParam = params.get("room");
+  if (fbParam) {
+    try {
+      localStorage.setItem("italy_fb_config", atob(fbParam));
+      if (roomParam) localStorage.setItem("italy_fb_room", roomParam);
+    } catch (e) {}
+  }
+  const stateParam = params.get("s");
+  if (stateParam) {
+    try {
+      const imported = JSON.parse(decodeURIComponent(escape(atob(stateParam))));
+      if (imported.overrides) { userState = imported; saveState(); showToast("공유받은 가족 일정을 불러왔습니다!"); }
+    } catch (e) {}
+  }
+}
+
+function initMainMap() {
+  map = L.map("map", { zoomControl: false }).setView([45.4685, 9.1820], 13);
+  tileLayer = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "&copy; OpenStreetMap" }).addTo(map);
+  markersLayer = L.layerGroup().addTo(map);
+  linesLayer = L.layerGroup().addTo(map);
+}
+
+function toggleMapTile() {
+  isSatelliteTile = !isSatelliteTile;
+  map.removeLayer(tileLayer);
+  if (isSatelliteTile) {
+    tileLayer = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}", { maxZoom: 19, attribution: "&copy; Esri" }).addTo(map);
+    document.getElementById("tileToggleBtn").textContent = "🗺️ ESRI 지도";
+  } else {
+    tileLayer = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "&copy; OpenStreetMap" }).addTo(map);
+    document.getElementById("tileToggleBtn").textContent = "🗺️ 기본지도";
+  }
+}
+
+function togglePolylines() {
+  showPolylines = !showPolylines;
+  const btn = document.getElementById("lineToggleBtn");
+  btn.textContent = showPolylines ? "● 동선 선 ON" : "○ 동선 선 OFF";
+  btn.classList.toggle("text-emerald-700", showPolylines);
+  btn.classList.toggle("text-slate-400", !showPolylines);
+  renderCurrentTab();
+}
+
+function fitCurrentBounds() {
+  const layers = markersLayer.getLayers();
+  if (layers.length > 0) map.fitBounds(L.featureGroup(layers).getBounds().pad(0.18));
+}
+
+function getCityPlaces(cityId) {
+  const city = BASE_CITIES[cityId];
+  if (!city) return [];
+  const combined = [...city.places, ...(userState.customPlaces[cityId] || [])];
+  return combined.map(p => userState.overrides[p.id] ? Object.assign({}, p, userState.overrides[p.id]) : Object.assign({}, p));
+}
+
+function getZoneMeta(cityId, zoneId) {
+  const city = BASE_CITIES[cityId];
+  return city.zones.find(z => z.id === zoneId) || city.zones[0];
+}
+
+function cycleTab(dir) {
+  const idx = TAB_ORDER.indexOf(currentTab);
+  switchTab(TAB_ORDER[(idx + dir + TAB_ORDER.length) % TAB_ORDER.length]);
+}
+
+function switchTab(tabId) {
+  currentTab = tabId;
+  document.getElementById("citySelector").value = tabId;
+  selectedZone = "ALL";
+  selectedCat = "ALL";
+  const isAirport = tabId === "airport";
+  document.getElementById("cityFilterBar").classList.toggle("hidden", isAirport);
+  document.getElementById("fabAddBtn").classList.toggle("hidden", isAirport);
+  renderCurrentTab();
+}
+
+function setViewMode(mode) {
+  viewMode = mode;
+  document.getElementById("modeAllBtn").className = mode === "all" ? "px-2.5 py-1.5 rounded-md text-xs font-bold bg-white text-slate-900 shadow-sm" : "px-2.5 py-1.5 rounded-md text-xs font-bold text-slate-600";
+  document.getElementById("modeSelBtn").className = mode === "selected" ? "px-2.5 py-1.5 rounded-md text-xs font-bold bg-amber-400 text-slate-950 shadow-sm" : "px-2.5 py-1.5 rounded-md text-xs font-bold text-slate-600";
+  document.getElementById("selectedSubRow").classList.toggle("hidden", mode !== "selected");
+  renderCurrentTab();
+}
+
+function setSortMode(mode) {
+  sortMode = mode;
+  document.getElementById("sortZoneBtn").className = mode === "zone" ? "px-2.5 py-1 rounded text-xs font-bold bg-amber-600 text-white" : "px-2.5 py-1 rounded text-xs font-bold bg-white text-amber-900 border border-amber-300";
+  document.getElementById("sortTimeBtn").className = mode === "time" ? "px-2.5 py-1 rounded text-xs font-bold bg-amber-600 text-white" : "px-2.5 py-1 rounded text-xs font-bold bg-white text-amber-900 border border-amber-300";
+  renderCurrentTab();
+}
+
+function toggleFilterDrawer() {
+  const isHidden = document.getElementById("filterDrawer").classList.toggle("hidden");
+  document.getElementById("filterChevron").textContent = isHidden ? "▾" : "▴";
+}
+
+function updateFilterSummary() {
+  const city = BASE_CITIES[currentTab];
+  if (!city) return;
+  const zLabel = selectedZone === "ALL" ? "전체 권역" : getZoneMeta(currentTab, selectedZone).name.split(" · ")[0];
+  const cLabel = selectedCat === "ALL" ? "전체 분류" : selectedCat;
+  document.getElementById("filterSummaryText").textContent = `${zLabel} · ${cLabel}`;
+}
+
+function setSheetState(state) {
+  sheetState = state;
+  const sheet = document.getElementById("bottomSheet");
+  const fab = document.getElementById("fabAddBtn");
+  const carousel = document.getElementById("mapCarouselWrapper");
+
+  if (state === "peek") {
+    sheet.style.height = "15dvh";
+    fab.style.bottom = "calc(15dvh + 98px)";
+    if (currentTab !== "airport") carousel.classList.remove("hidden");
+  } else if (state === "half") {
+    sheet.style.height = "52dvh";
+    fab.style.bottom = "calc(52dvh + 12px)";
+    carousel.classList.add("hidden");
+  } else {
+    sheet.style.height = "86dvh";
+    fab.style.bottom = "calc(16px + env(safe-area-inset-bottom))";
+    carousel.classList.add("hidden");
+  }
+
+  ["peek", "half", "full"].forEach(s => {
+    const btn = document.getElementById("snap" + s.charAt(0).toUpperCase() + s.slice(1) + "Btn");
+    btn.className = s === state ? "px-2.5 py-1 rounded-md text-[11px] font-bold bg-slate-900 text-white" : "px-2.5 py-1 rounded-md text-[11px] font-bold bg-slate-100 text-slate-600";
+  });
+  setTimeout(() => map && map.invalidateSize(), 280);
+}
+
+function setupSheetDrag() {
+  const handle = document.getElementById("sheetDragHandle");
+  const sheet = document.getElementById("bottomSheet");
+  let startY = 0, startH = 0;
+
+  handle.addEventListener("touchstart", (e) => {
+    startY = e.touches[0].clientY;
+    startH = sheet.getBoundingClientRect().height;
+    sheet.classList.add("dragging");
+  }, { passive: true });
+
+  handle.addEventListener("touchmove", (e) => {
+    const dy = startY - e.touches[0].clientY;
+    const vh = window.innerHeight;
+    sheet.style.height = Math.max(vh * 0.14, Math.min(vh * 0.88, startH + dy)) + "px";
+  }, { passive: true });
+
+  handle.addEventListener("touchend", () => {
+    sheet.classList.remove("dragging");
+    const ratio = sheet.getBoundingClientRect().height / window.innerHeight;
+    if (ratio < 0.32) setSheetState("peek");
+    else if (ratio < 0.68) setSheetState("half");
+    else setSheetState("full");
+  });
+}
+
+function renderCurrentTab() {
+  markersLayer.clearLayers();
+  linesLayer.clearLayers();
+  if (currentTab === "airport") {
+    document.getElementById("mapCarouselWrapper").classList.add("hidden");
+    renderAirportTab();
+    return;
+  }
+
+  const city = BASE_CITIES[currentTab];
+  const allPlaces = getCityPlaces(currentTab);
+  document.getElementById("selectedCountBadge").textContent = allPlaces.filter(p => p.selected).length;
+
+  renderFilterChips(city, allPlaces);
+  updateFilterSummary();
+
+  let filtered = allPlaces.filter(p => {
+    if (viewMode === "selected" && !p.selected) return false;
+    if (selectedZone !== "ALL" && p.zone !== selectedZone) return false;
+    if (selectedCat !== "ALL" && p.cat !== selectedCat) return false;
+    return true;
+  });
+
+  document.getElementById("sheetTitle").textContent = `${city.name} (${city.dates}) · ${filtered.length}곳`;
+  const boundsPts = [];
+
+  if (viewMode === "selected" && sortMode === "time") {
+    const byDay = {};
+    city.dateOptions.forEach(d => byDay[d] = []);
+    byDay["시간 미정"] = [];
+    filtered.forEach(p => {
+      const dKey = (p.day && byDay[p.day]) ? p.day : "시간 미정";
+      byDay[dKey].push(p);
+    });
+    Object.keys(byDay).forEach(d => {
+      byDay[d].sort((a, b) => (a.time || "99:99").localeCompare(b.time || "99:99"));
+      const dayCoords = [];
+      byDay[d].forEach((p, idx) => {
+        addPlaceMarker(p, idx + 1, getZoneMeta(currentTab, p.zone).color);
+        boundsPts.push([p.lat, p.lng]);
+        if (d !== "시간 미정") dayCoords.push([p.lat, p.lng]);
+      });
+      if (showPolylines && dayCoords.length >= 2) {
+        L.polyline(dayCoords, { color: "#0F172A", weight: 3.5, opacity: 0.75, dashArray: "6, 6" }).addTo(linesLayer);
+      }
+    });
+    renderTimelineCards(byDay);
+  } else {
+    city.zones.forEach(z => {
+      const zPlaces = filtered.filter(p => p.zone === z.id);
+      const zCoords = [];
+      zPlaces.forEach((p, idx) => {
+        addPlaceMarker(p, idx + 1, z.color);
+        boundsPts.push([p.lat, p.lng]);
+        zCoords.push([p.lat, p.lng]);
+      });
+      if (showPolylines && zCoords.length >= 2) {
+        L.polyline(zCoords, { color: z.color, weight: 3.5, opacity: 0.72, dashArray: "5, 6" }).addTo(linesLayer);
+      }
+    });
+    renderZoneCards(city, filtered);
+  }
+
+  renderMapCarousel(filtered);
+  if (sheetState === "peek") document.getElementById("mapCarouselWrapper").classList.remove("hidden");
+  if (boundsPts.length > 0) map.fitBounds(L.latLngBounds(boundsPts).pad(0.18));
+  else map.setView(city.center, city.zoom);
+}
+
+function addPlaceMarker(p, num, color) {
+  const icon = L.divIcon({
+    className: "",
+    html: `<div class="custom-pin ${p.selected ? "selected-ring" : ""}" style="background:${color}; width:28px; height:28px;">${num}</div>`,
+    iconSize: [28, 28], iconAnchor: [14, 14]
+  });
+  const gMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p.name + " " + p.addr)}`;
+  const popupHtml = `
+    <div style="min-width:205px; max-width:240px;">
+      <div style="font-size:11px; font-weight:800; color:${color}; margin-bottom:2px;">${p.cat} ${p.day ? `· ${p.day} ${p.time || ""}` : ""}</div>
+      <div style="font-size:14px; font-weight:800; color:#0F172A; margin-bottom:4px;">${p.name}</div>
+      <div style="font-size:11px; color:#475569; margin-bottom:8px;">${p.why || p.memo || p.addr}</div>
+      <div style="display:flex; gap:6px;">
+        <button onclick="toggleSelectPlace('${p.id}')" style="flex:1; height:32px; border-radius:8px; font-size:12px; font-weight:700; border:none; background:${p.selected ? "#FACC15" : "#0F172A"}; color:${p.selected ? "#0F172A" : "#fff"};">
+          ${p.selected ? "★ 선택됨" : "☆ 담기"}
+        </button>
+        <a href="${gMapsUrl}" target="_blank" rel="noopener" style="height:32px; padding:0 10px; border-radius:8px; font-size:12px; font-weight:700; background:#EFF6FF; color:#1D4ED8; display:flex; align-items:center; text-decoration:none;">지도 ↗</a>
+      </div>
+    </div>`;
+  L.marker([p.lat, p.lng], { icon }).bindPopup(popupHtml).addTo(markersLayer);
+}
+
+function renderFilterChips(city, allPlaces) {
+  let zHtml = `<button onclick="selectZoneFilter('ALL')" class="px-3 py-1.5 rounded-full text-xs font-bold shrink-0 border ${selectedZone === "ALL" ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-700 border-slate-200"}">전체 (${allPlaces.length})</button>`;
+  city.zones.forEach(z => {
+    const cnt = allPlaces.filter(p => p.zone === z.id).length;
+    const active = selectedZone === z.id;
+    zHtml += `<button onclick="selectZoneFilter('${z.id}')" class="px-3 py-1.5 rounded-full text-xs font-bold shrink-0 border flex items-center gap-1.5 ${active ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-700 border-slate-200"}"><span class="w-2 h-2 rounded-full" style="background:${z.color};"></span>${z.name.split(" · ")[0]} (${cnt})</button>`;
+  });
+  document.getElementById("zoneChipsContainer").innerHTML = zHtml;
+
+  const cats = ["ALL", "명소", "식당", "카페/간식", "쇼핑", "숙소/교통"];
+  document.getElementById("catChipsContainer").innerHTML = cats.map(c => {
+    const active = selectedCat === c;
+    return `<button onclick="selectCatFilter('${c}')" class="px-3 py-1.5 rounded-full text-xs font-bold shrink-0 border ${active ? "bg-blue-600 text-white border-blue-600" : "bg-white text-slate-700 border-slate-200"}">${c === "ALL" ? "전체" : c}</button>`;
+  }).join("");
+}
+
+function selectZoneFilter(zId) { selectedZone = zId; renderCurrentTab(); }
+function selectCatFilter(cId) { selectedCat = cId; renderCurrentTab(); }
+
+function buildGoogleMultiRouteUrl(places) {
+  if (!places || places.length === 0) return "#";
+  if (places.length === 1) return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(places[0].name + " " + places[0].addr)}`;
+  const limited = places.slice(0, 10);
+  const origin = `${limited[0].lat},${limited[0].lng}`;
+  const dest = `${limited[limited.length - 1].lat},${limited[limited.length - 1].lng}`;
+  const wps = limited.slice(1, -1).map(p => `${p.lat},${p.lng}`).join("|");
+  return `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}${wps ? `&waypoints=${encodeURIComponent(wps)}` : ""}&travelmode=walking`;
+}
+
+function renderZoneCards(city, filtered) {
+  const container = document.getElementById("sheetContent");
+  if (filtered.length === 0) {
+    container.innerHTML = `<div class="text-center py-10 text-sm text-slate-500 font-semibold">조건에 맞는 장소가 없습니다.<br/><button onclick="setViewMode('all'); selectedZone='ALL'; selectedCat='ALL'; renderCurrentTab();" class="mt-2 px-4 py-2 rounded-xl bg-slate-900 text-white text-xs font-bold">전체 후보 보기</button></div>`;
+    return;
+  }
+  let html = "";
+  city.zones.forEach(z => {
+    const zPlaces = filtered.filter(p => p.zone === z.id);
+    if (zPlaces.length === 0) return;
+    html += `
+      <div class="space-y-2">
+        <div class="flex items-center justify-between bg-slate-50 px-3 py-2 rounded-xl border border-slate-200">
+          <div class="flex items-center gap-2 min-w-0">
+            <span class="w-3 h-3 rounded-full shrink-0" style="background:${z.color};"></span>
+            <span class="font-extrabold text-xs text-slate-900 truncate">${z.name} (${zPlaces.length})</span>
+          </div>
+          <a href="${buildGoogleMultiRouteUrl(zPlaces)}" target="_blank" rel="noopener" class="px-2.5 py-1.5 rounded-lg bg-blue-600 text-white text-[11px] font-bold shrink-0">구글맵 다중동선 ↗</a>
+        </div>
+        <div class="space-y-2.5">${zPlaces.map((p, idx) => renderPlaceCardHtml(p, idx + 1, z.color)).join("")}</div>
+      </div>`;
+  });
+  container.innerHTML = html;
+}
+
+function renderTimelineCards(byDay) {
+  const container = document.getElementById("sheetContent");
+  let html = "";
+  Object.keys(byDay).forEach(dayLabel => {
+    const list = byDay[dayLabel];
+    if (list.length === 0) return;
+    html += `
+      <div class="space-y-2">
+        <div class="flex items-center justify-between bg-slate-900 text-white px-3 py-2 rounded-xl">
+          <span class="font-extrabold text-xs">📅 ${dayLabel} (${list.length}곳)</span>
+          <a href="${buildGoogleMultiRouteUrl(list)}" target="_blank" rel="noopener" class="px-2.5 py-1 rounded-lg bg-amber-400 text-slate-950 text-[11px] font-extrabold">이날 동선 길찾기 ↗</a>
+        </div>
+        <div class="space-y-2.5">${list.map((p, idx) => renderPlaceCardHtml(p, idx + 1, getZoneMeta(currentTab, p.zone).color)).join("")}</div>
+      </div>`;
+  });
+  container.innerHTML = html || `<div class="text-center py-10 text-sm text-slate-500 font-semibold">아직 선택된 일정이 없습니다.<br/><b>전체 후보</b>에서 <code>☆ 담기</code>를 눌러 일정을 구성해 보세요!</div>`;
+}
+
+function renderPlaceCardHtml(p, num, color) {
+  const gUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p.name + " " + p.addr)}`;
+  const statusBadge = p.status === "예약 완료"
+    ? `<span class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[11px] font-bold">✅ 예약완료</span>`
+    : p.status === "예약 필수"
+      ? `<span class="px-2 py-0.5 rounded bg-rose-100 text-rose-800 text-[11px] font-bold">⏰ 예약필수</span>`
+      : `<span class="px-2 py-0.5 rounded bg-slate-100 text-slate-600 text-[11px] font-bold">🚶 워크인</span>`;
+
+  return `
+    <article class="bg-white rounded-2xl border ${p.selected ? "border-amber-400 ring-1 ring-amber-300" : "border-slate-200"} p-3 shadow-xs space-y-2">
+      <div class="flex items-start justify-between gap-2" onclick="focusPlaceOnMap('${p.id}')">
+        <div class="flex items-start gap-2.5 min-w-0">
+          <span class="w-6 h-6 rounded-full text-white text-xs font-extrabold flex items-center justify-center shrink-0 mt-0.5" style="background:${color};">${num}</span>
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-1 mb-0.5">
+              <span class="text-[11px] font-bold text-slate-500">${p.cat}</span>
+              ${statusBadge}
+              ${p.day ? `<span class="px-2 py-0.5 rounded bg-blue-100 text-blue-800 text-[11px] font-extrabold">${p.day} ${p.time || ""}</span>` : ""}
+            </div>
+            <h4 class="font-extrabold text-[15px] text-slate-900 leading-snug">${p.name}</h4>
+          </div>
+        </div>
+        <button onclick="event.stopPropagation(); toggleSelectPlace('${p.id}')" class="h-11 px-3 rounded-xl font-extrabold text-xs shrink-0 flex items-center gap-1 active:scale-95 ${p.selected ? "bg-amber-400 text-slate-950" : "bg-slate-100 text-slate-700"}">
+          <span>${p.selected ? "★" : "☆"}</span><span>${p.selected ? "선택됨" : "담기"}</span>
+        </button>
+      </div>
+      ${p.why ? `<p class="text-xs text-slate-700 leading-relaxed"><b class="text-slate-900">추천:</b> ${p.why}</p>` : ""}
+      ${p.charm ? `<p class="text-xs text-slate-600 leading-relaxed"><b class="text-blue-700">매력:</b> ${p.charm}</p>` : ""}
+      ${p.holiday ? `<div class="bg-amber-50 border border-amber-200/80 rounded-lg px-2.5 py-1.5 text-[11px] font-semibold text-amber-900">⚠️ ${p.holiday}</div>` : ""}
+      ${p.memo ? `<div class="bg-blue-50 border border-blue-200 rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-blue-900">📝 ${p.memo}</div>` : ""}
+      <div class="grid grid-cols-3 gap-1.5 pt-1">
+        <button onclick="openScheduleModal('${p.id}')" class="h-11 rounded-xl bg-slate-100 active:bg-slate-200 text-slate-800 font-bold text-xs flex items-center justify-center gap-1">🕒 일정·예약</button>
+        <button onclick="openTaxiCard('${p.id}')" class="h-11 rounded-xl bg-amber-50 active:bg-amber-100 border border-amber-200 text-amber-900 font-bold text-xs flex items-center justify-center gap-1">🚕 기사님제시</button>
+        <a href="${gUrl}" target="_blank" rel="noopener" class="h-11 rounded-xl bg-blue-50 active:bg-blue-100 border border-blue-200 text-blue-700 font-bold text-xs flex items-center justify-center gap-1">구글맵 ↗</a>
+      </div>
+      ${p.isCustom ? `<div class="flex justify-end"><button onclick="deleteCustomPlace('${p.id}')" class="text-[11px] text-rose-500 font-bold py-1 px-2">직접 등록 삭제</button></div>` : ""}
+    </article>`;
+}
+
+function renderMapCarousel(places) {
+  document.getElementById("mapCarousel").innerHTML = places.map((p, idx) => {
+    const zMeta = getZoneMeta(currentTab, p.zone);
+    return `
+      <div onclick="focusPlaceOnMap('${p.id}')" class="snap-center shrink-0 w-64 bg-white/95 backdrop-blur rounded-2xl p-2.5 shadow-lg border ${p.selected ? "border-amber-400" : "border-slate-200"} flex flex-col justify-between gap-1.5">
+        <div class="flex items-start justify-between gap-1.5">
+          <div class="min-w-0">
+            <div class="text-[10px] font-extrabold" style="color:${zMeta.color};">${idx + 1}. ${p.cat} ${p.time ? `· ${p.time}` : ""}</div>
+            <div class="font-extrabold text-xs text-slate-900 truncate">${p.name}</div>
+          </div>
+          <button onclick="event.stopPropagation(); toggleSelectPlace('${p.id}')" class="px-2 py-1 rounded-lg text-[11px] font-extrabold ${p.selected ? "bg-amber-400 text-slate-950" : "bg-slate-100 text-slate-700"}">${p.selected ? "★" : "☆"}</button>
+        </div>
+        <div class="flex gap-1.5">
+          <button onclick="event.stopPropagation(); openTaxiCard('${p.id}')" class="flex-1 h-8 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-[11px] font-bold">🚕 주소제시</button>
+          <a onclick="event.stopPropagation()" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p.name + " " + p.addr)}" target="_blank" rel="noopener" class="flex-1 h-8 rounded-lg bg-blue-600 text-white text-[11px] font-bold flex items-center justify-center">길찾기 ↗</a>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+function focusPlaceOnMap(placeId) {
+  const p = getCityPlaces(currentTab).find(x => x.id === placeId);
+  if (!p) return;
+  if (sheetState === "full") setSheetState("half");
+  map.flyTo([p.lat, p.lng], 16, { duration: 0.5 });
+}
+
+function toggleSelectPlace(placeId) {
+  const p = getCityPlaces(currentTab).find(x => x.id === placeId);
+  if (!p) return;
+  const nextVal = !p.selected;
+  userState.overrides[placeId] = Object.assign({}, userState.overrides[placeId], { selected: nextVal });
+  saveState();
+  renderCurrentTab();
+  showToast(nextVal ? `★ '${p.name}' 일정에 담았습니다` : `'${p.name}' 선택 해제`);
+}
+
+function renderAirportTab() {
+  const isArr = airportDirection === "arrival";
+  document.getElementById("sheetTitle").textContent = isArr ? "✈️ 12/30(수) 입국: 말펜사 공항 → 밀라노 숙소" : "✈️ 1/9(토) 출국: 로마 숙소 → 피우미치노 공항";
+  const pts = isArr
+    ? [
+        { name: "밀라노 말펜사 공항 T1 (MXP)", addr: "21010 Ferno VA, Italy", lat: 45.6301, lng: 8.7255, color: "#EF4444" },
+        { name: "밀라노 첸트랄레 역 (열차 환승점)", addr: "Piazza Duca d'Aosta, 1, Milano", lat: 45.4860, lng: 9.2041, color: "#3B82F6" },
+        { name: "밀라노 도심 숙소 권역 (두오모 기준)", addr: "Piazza del Duomo, Milano", lat: 45.4641, lng: 9.1919, color: "#10B981" }
+      ]
+    : [
+        { name: "로마 숙소 (트레비 분수 인근)", addr: "Vicolo Scanderbeg, 112, 00187 Roma RM", lat: 41.9004, lng: 12.4847, color: "#10B981" },
+        { name: "로마 테르미니 역 (열차 환승점)", addr: "Piazza dei Cinquecento, Roma", lat: 41.9010, lng: 12.5018, color: "#3B82F6" },
+        { name: "로마 피우미치노 공항 T3 (FCO - KE932)", addr: "Via dell'Aeroporto di Fiumicino, 00054 Fiumicino RM", lat: 41.7999, lng: 12.2462, color: "#EF4444" }
+      ];
+
+  const coords = [];
+  pts.forEach((pt, i) => {
+    const icon = L.divIcon({ className: "", html: `<div class="custom-pin" style="background:${pt.color}; width:30px; height:30px;">${i + 1}</div>`, iconSize: [30, 30], iconAnchor: [15, 15] });
+    L.marker([pt.lat, pt.lng], { icon }).bindPopup(`<b>${pt.name}</b><br/><small>${pt.addr}</small>`).addTo(markersLayer);
+    coords.push([pt.lat, pt.lng]);
+  });
+  L.polyline(coords, { color: "#0F172A", weight: 4, dashArray: "6,6" }).addTo(linesLayer);
+  map.fitBounds(L.latLngBounds(coords).pad(0.22));
+
+  const gRouteUrl = isArr
+    ? `https://www.google.com/maps/dir/?api=1&origin=${pts[0].lat},${pts[0].lng}&destination=${pts[2].lat},${pts[2].lng}&travelmode=transit`
+    : `https://www.google.com/maps/dir/?api=1&origin=${pts[0].lat},${pts[0].lng}&destination=${pts[2].lat},${pts[2].lng}&travelmode=driving`;
+
+  const options = isArr
+    ? [
+        { id: "taxi", title: "공식 화이트 택시 (시 조례 정액제)", price: "€114 (4인+캐리어 일괄)", time: "약 50~60분 · 문 앞 직통", badge: "4인 가족 1순위 추천", desc: "입국장 출구 공식 택시 승강장 이용. 4인+대형 캐리어 기준 가장 편하고 계단 이동이 없습니다." },
+        { id: "train", title: "말펜사 익스프레스 열차 + 택시/지하철", price: "€52 (€13 × 4인) + 환승비", time: "약 55분 (첸트랄레/카도르나역)", badge: "교통체증 제로", desc: "T1 지하 기차역 탑승. 4인 합산 시 택시와 가격 차이가 크지 않아 짐이 많으면 택시가 유리합니다." },
+        { id: "van", title: "사전 예약 프라이빗 밴 픽업", price: "약 €125~140", time: "약 50분 · 피켓 미팅", badge: "대형 캐리어 4개 이상", desc: "캐리어가 4개 이상이거나 입국 지연이 걱정될 때 기사가 입국장에서 대기합니다." }
+      ]
+    : [
+        { id: "taxi", title: "로마 시 공식 화이트 택시 (정액제)", price: "€55 (4인+수하물 정액)", time: "약 45~55분 · 숙소 앞 탑승", badge: "기차 4인(€56)보다 저렴!", desc: "아우렐리아 성벽 내(트레비 숙소 포함) ↔ FCO 공항 법정 정액제 €55. 4인 가족은 무조건 택시가 이득입니다." },
+        { id: "train", title: "테르미니역 이동 + 레오나르도 익스프레스", price: "€56 (€14 × 4인) + 택시비", time: "약 55분", badge: "출퇴근 극심 정체 시 대안", desc: "숙소에서 테르미니역까지 이동 후 15분 간격 직통 열차(32분 소요) 탑승." },
+        { id: "van", title: "프라이빗 밴 샌딩 (벤츠 V클래스 등)", price: "약 €85~100", time: "약 45분", badge: "쇼핑 캐리어 추가 시", desc: "귀국길 면세·아울렛 쇼핑 짐이 늘어 일반 택시 트렁크가 부족할 때 추천." }
+      ];
+
+  const chosen = selectedTransport[airportDirection];
+  document.getElementById("sheetContent").innerHTML = `
+    <div class="grid grid-cols-2 gap-1.5 bg-slate-100 p-1 rounded-xl">
+      <button onclick="setAirportDir('arrival')" class="h-11 rounded-lg text-xs font-extrabold ${isArr ? "bg-slate-900 text-white shadow" : "text-slate-600"}">🛬 12/30 입국 (MXP→숙소)</button>
+      <button onclick="setAirportDir('departure')" class="h-11 rounded-lg text-xs font-extrabold ${!isArr ? "bg-slate-900 text-white shadow" : "text-slate-600"}">🛫 1/9 출국 (숙소→FCO)</button>
+    </div>
+    <div class="grid grid-cols-2 gap-2">
+      <button onclick="openAirportTaxiCard()" class="h-12 rounded-xl bg-amber-400 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-1 shadow-xs">🚕 기사님 목적지 제시</button>
+      <a href="${gRouteUrl}" target="_blank" rel="noopener" class="h-12 rounded-xl bg-blue-600 text-white font-extrabold text-xs flex items-center justify-center gap-1 shadow-xs">구글맵 경로 열기 ↗</a>
+    </div>
+    <div class="space-y-2">
+      <div class="text-xs font-extrabold text-slate-800">4인 가족 교통수단 선택 (터치하여 확정)</div>
+      ${options.map(opt => {
+        const active = chosen === opt.id;
+        return `
+          <div onclick="chooseAirportTransport('${opt.id}')" class="p-3 rounded-2xl border cursor-pointer transition-all ${active ? "bg-blue-50/70 border-blue-600 ring-1 ring-blue-500" : "bg-white border-slate-200"}">
+            <div class="flex items-center justify-between gap-2 mb-1">
+              <span class="px-2 py-0.5 rounded bg-slate-900 text-white text-[10px] font-bold">${opt.badge}</span>
+              <span class="text-xs font-extrabold ${active ? "text-blue-700" : "text-slate-400"}">${active ? "✓ 선택됨" : "선택하기"}</span>
+            </div>
+            <div class="font-extrabold text-sm text-slate-900">${opt.title}</div>
+            <div class="text-xs font-bold text-blue-700 mt-0.5">${opt.price} · ${opt.time}</div>
+            <p class="text-xs text-slate-600 mt-1 leading-relaxed">${opt.desc}</p>
+          </div>`;
+      }).join("")}
+    </div>
+    ${!isArr ? buildKe932ScheduleHtml(ke932Time) : ""}`;
+}
+
+function setAirportDir(dir) { airportDirection = dir; renderAirportTab(); }
+function chooseAirportTransport(id) { selectedTransport[airportDirection] = id; saveState(); renderAirportTab(); showToast("공항 이동 수단이 저장되었습니다"); }
+
+function openAirportTaxiCard() {
+  const isArr = airportDirection === "arrival";
+  document.getElementById("taxiPlaceName").textContent = isArr ? "밀라노 도심 숙소 (Centro Milano)" : "Aeroporto di Roma Fiumicino - Terminal 3";
+  document.getElementById("taxiPlaceAddr").textContent = isArr ? "내 장소 등록에서 밀라노 숙소 주소를 등록해 주세요" : "Via dell'Aeroporto di Fiumicino, 00054 Fiumicino RM (Terminal 3 - Korean Air)";
+  document.getElementById("taxiPlaceMeta").textContent = isArr ? "Tariffa fissa Malpensa - Milano €114" : "Tariffa fissa Roma Centro - Fiumicino €55 (4인 + 수하물)";
+  document.getElementById("taxiGoogleMapsBtn").href = isArr ? "https://www.google.com/maps/search/?api=1&query=Piazza+del+Duomo+Milano" : "https://www.google.com/maps/search/?api=1&query=Fiumicino+Airport+Terminal+3";
+  document.getElementById("taxiCardModal").classList.remove("hidden");
+}
+
+function buildKe932ScheduleHtml(flightTime) {
+  const [hh, mm] = flightTime.split(":").map(Number);
+  const baseMins = hh * 60 + mm;
+  const fmt = (offset) => {
+    const m = (baseMins + offset + 1440) % 1440;
+    return String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
+  };
+  const steps = [
+    { t: fmt(-240), label: "트레비 숙소 출발 (택시 탑승)", sub: "택스리펀 구매 물품은 위탁 전 세관 확인 가능하도록 별도 정리" },
+    { t: fmt(-190), label: "피우미치노 공항(FCO) T3 도착", sub: "대한항공(KE932) 카운터 구역 및 택스리펀 데스크 확인" },
+    { t: fmt(-175), label: "택스리펀 세관 도장 & 환급 처리", sub: "Global Blue / Planet 키오스크 스캔 (위탁 수하물 부치기 전 필수!)" },
+    { t: fmt(-145), label: "수하물 위탁 & 탑승권 발권", sub: "가족 여권·전자항공권 확인 및 캐리어 수하물 위탁" },
+    { t: fmt(-100), label: "보안검색 & 자동출국심사(E-Gate)", sub: "한국 여권 소지자 E-Gate 통과 후 면세구역 이동" },
+    { t: fmt(-40), label: "탑승 게이트(E구역) 도착 및 보딩", sub: "트레인 셔틀 탑승 후 E 게이트 대기" }
+  ];
+  const checks = [
+    { id: "c1", text: "여권 4인분 · 항공권 · 트레니탈리아 예매 내역" },
+    { id: "c2", text: "택스리펀 영수증 & 여권 명의 일치 확인" },
+    { id: "c3", text: "액체류(올리브오일·발사믹·와인·향수) 위탁 수하물 포장" },
+    { id: "c4", text: "보조배터리·리튬이온 기기 기내 반입 가방 이동" },
+    { id: "c5", text: "숙소 열쇠 반납 및 셀프 체크아웃 사진 촬영" }
+  ];
+  return `
+    <div class="bg-slate-900 text-white rounded-2xl p-3.5 space-y-3">
+      <div class="flex items-center justify-between gap-2">
+        <div>
+          <div class="text-[11px] font-bold text-amber-400">1/9(토) KE932 귀국 역산 플래너</div>
+          <div class="text-sm font-extrabold">항공편 출발 시각 기준 자동 계산</div>
+        </div>
+        <input type="time" value="${flightTime}" onchange="updateKe932Time(this.value)" class="h-10 px-2.5 rounded-xl bg-slate-800 border border-slate-700 text-white font-extrabold text-sm" />
+      </div>
+      <div class="space-y-2 border-l-2 border-amber-400 pl-3 ml-1">
+        ${steps.map(s => `<div><div class="text-xs font-extrabold text-amber-300">${s.t} · <span class="text-white">${s.label}</span></div><div class="text-[11px] text-slate-400">${s.sub}</div></div>`).join("")}
+      </div>
+    </div>
+    <div class="bg-white rounded-2xl border border-slate-200 p-3.5 space-y-2">
+      <div class="text-xs font-extrabold text-slate-900">✅ 출국 전 4인 가족 최종 체크리스트</div>
+      ${checks.map(c => `<label class="flex items-center gap-2.5 py-1.5 cursor-pointer"><input type="checkbox" ${airportChecks[c.id] ? "checked" : ""} onchange="toggleAirportCheck('${c.id}')" class="w-5 h-5 rounded accent-slate-900" /><span class="text-xs font-semibold ${airportChecks[c.id] ? "line-through text-slate-400" : "text-slate-800"}">${c.text}</span></label>`).join("")}
+    </div>`;
+}
+
+function updateKe932Time(val) { if (val) { ke932Time = val; saveState(); renderAirportTab(); } }
+function toggleAirportCheck(id) { airportChecks[id] = !airportChecks[id]; saveState(); renderAirportTab(); }
+
+function openAddModal() {
+  const city = BASE_CITIES[currentTab] || BASE_CITIES.milan;
+  pendingLatLng = { lat: city.center[0], lng: city.center[1] };
+  pendingZoneId = city.zones[0].id;
+  pendingDay = city.dateOptions[0];
+  document.getElementById("newPlaceName").value = "";
+  document.getElementById("newPlaceAddr").value = "";
+  document.getElementById("newPlaceMemo").value = "";
+  document.getElementById("placeSearchInput").value = "";
+  document.getElementById("searchResultsList").classList.add("hidden");
+  document.getElementById("extGoogleMapsSearchLink").href = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(city.name)}`;
+  renderNewDateChips(city);
+  updateAutoZone(pendingLatLng.lat, pendingLatLng.lng);
+  goAddStep(1);
+  document.getElementById("addPlaceModal").classList.remove("hidden");
+  setTimeout(() => {
+    if (!miniMap) {
+      miniMap = L.map("miniMap").setView([pendingLatLng.lat, pendingLatLng.lng], 14);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(miniMap);
+      miniMap.on("click", (e) => setMiniPin(e.latlng.lat, e.latlng.lng, true));
+    } else {
+      miniMap.invalidateSize();
+      miniMap.setView([pendingLatLng.lat, pendingLatLng.lng], 14);
+    }
+    setMiniPin(pendingLatLng.lat, pendingLatLng.lng, false);
+  }, 150);
+}
+
+function closeAddModal() { document.getElementById("addPlaceModal").classList.add("hidden"); }
+
+function goAddStep(step) {
+  const isStep1 = step === 1;
+  document.getElementById("addStepBadge").textContent = isStep1 ? "STEP 1 / 2 · 위치 지정" : "STEP 2 / 2 · 이름 및 방문 시간";
+  document.getElementById("addStep1").classList.toggle("hidden", !isStep1);
+  document.getElementById("addStep2").classList.toggle("hidden", isStep1);
+  document.getElementById("addBackBtn").classList.toggle("hidden", isStep1);
+  document.getElementById("addNextBtn").classList.toggle("hidden", !isStep1);
+  document.getElementById("addSaveBtn").classList.toggle("hidden", isStep1);
+  if (isStep1 && miniMap) setTimeout(() => miniMap.invalidateSize(), 100);
+  if (!isStep1) setTimeout(() => document.getElementById("newPlaceName").focus(), 100);
+}
+
+function setMiniPin(lat, lng, reverseGeocode) {
+  pendingLatLng = { lat, lng };
+  if (miniMarker) miniMarker.setLatLng([lat, lng]);
+  else miniMarker = L.marker([lat, lng]).addTo(miniMap);
+  miniMap.panTo([lat, lng]);
+  updateAutoZone(lat, lng);
+  document.getElementById("miniMapStatus").textContent = `📍 위치 선택 완료 (위도 ${lat.toFixed(4)}, 경도 ${lng.toFixed(4)})`;
+  if (reverseGeocode) {
+    fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`)
+      .then(r => r.json())
+      .then(data => { if (data && data.display_name) document.getElementById("newPlaceAddr").value = data.display_name.split(",").slice(0, 3).join(","); })
+      .catch(() => {});
+  }
+}
+
+function updateAutoZone(lat, lng) {
+  const city = BASE_CITIES[currentTab] || BASE_CITIES.milan;
+  let best = city.zones[0], bestDist = Infinity;
+  city.zones.forEach(z => {
+    const d = Math.hypot(z.center[0] - lat, z.center[1] - lng);
+    if (d < bestDist) { bestDist = d; best = z; }
+  });
+  pendingZoneId = best.id;
+  document.getElementById("detectedZoneName").textContent = best.name;
+}
+
+function applyQuickTemplate(type) {
+  const city = BASE_CITIES[currentTab] || BASE_CITIES.milan;
+  if (type === "숙소") {
+    selectNewCat("숙소/교통");
+    document.getElementById("newPlaceName").value = `${city.name} 우리 가족 숙소`;
+    document.getElementById("newPlaceMemo").value = "셀프 체크인 숙소";
+  } else if (type === "열차") {
+    selectNewCat("숙소/교통");
+    document.getElementById("newPlaceName").value = `${city.name} 기차역 이동`;
+  } else {
+    selectNewCat("식당");
+    document.getElementById("newPlaceName").value = "";
+  }
+  showToast("템플릿 적용됨 · 지도에서 위치를 찍어주세요");
+}
+
+function searchPlaceLocation() {
+  const q = document.getElementById("placeSearchInput").value.trim();
+  if (!q) return;
+  const atMatch = q.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+  if (atMatch) {
+    setMiniPin(parseFloat(atMatch[1]), parseFloat(atMatch[2]), true);
+    showToast("구글맵 URL에서 좌표를 추출했습니다!");
+    return;
+  }
+  if (q.includes("maps.app.goo.gl") || q.includes("goo.gl/maps")) {
+    showToast("단축 링크에는 좌표가 없습니다. 아래 검색어나 미니맵 터치를 이용해 주세요!");
+    return;
+  }
+  const city = BASE_CITIES[currentTab] || BASE_CITIES.milan;
+  const listEl = document.getElementById("searchResultsList");
+  listEl.classList.remove("hidden");
+  listEl.innerHTML = `<div class="text-xs text-slate-500 p-2">위치 검색 중...</div>`;
+  fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=5&q=${encodeURIComponent(q + " " + city.name + " Italy")}`)
+    .then(r => r.json())
+    .then(items => {
+      if (!items || items.length === 0) {
+        listEl.innerHTML = `<div class="text-xs text-rose-600 p-2 font-semibold">검색 결과가 없습니다. 도로명 주소를 넣거나 아래 미니맵을 직접 터치해 주세요.</div>`;
+        return;
+      }
+      listEl.innerHTML = items.map(it => {
+        const shortName = it.display_name.split(",").slice(0, 3).join(",");
+        return `<button type="button" onclick="pickSearchResult(${it.lat}, ${it.lon}, '${shortName.replace(/'/g, "")}')" class="w-full text-left p-2 rounded-lg bg-white hover:bg-blue-50 border border-slate-200 text-xs font-semibold text-slate-800 block">📍 ${shortName}</button>`;
+      }).join("");
+    }).catch(() => { listEl.innerHTML = `<div class="text-xs text-rose-600 p-2">네트워크 오류 · 미니맵을 직접 터치해 주세요.</div>`; });
+}
+
+function pickSearchResult(lat, lng, label) {
+  setMiniPin(parseFloat(lat), parseFloat(lng), false);
+  document.getElementById("newPlaceAddr").value = label;
+  if (!document.getElementById("newPlaceName").value) document.getElementById("newPlaceName").value = label.split(",")[0];
+  document.getElementById("searchResultsList").classList.add("hidden");
+  showToast("위치가 지정되었습니다");
+}
+
+function renderNewDateChips(city) {
+  document.getElementById("newDateChips").innerHTML = city.dateOptions.map(d => `<button type="button" onclick="pendingDay='${d}'; renderNewDateChips(BASE_CITIES[currentTab]);" class="px-3 py-2 rounded-xl text-xs font-bold shrink-0 border ${pendingDay === d ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-700 border-slate-200"}">${d}</button>`).join("");
+}
+
+function selectNewCat(cat) {
+  pendingCat = cat;
+  document.querySelectorAll(".cat-opt").forEach(btn => {
+    const active = btn.dataset.cat === cat;
+    btn.className = active ? "cat-opt py-2.5 rounded-xl border text-xs font-bold bg-slate-900 text-white border-slate-900" : "cat-opt py-2.5 rounded-xl border text-xs font-bold bg-white text-slate-700 border-slate-200";
+  });
+}
+
+function setNewTime(t) { document.getElementById("newPlaceTime").value = t; }
+function adjustNewTime(delta) {
+  const inp = document.getElementById("newPlaceTime");
+  const [h, m] = (inp.value || "14:00").split(":").map(Number);
+  const tot = (h * 60 + m + delta + 1440) % 1440;
+  inp.value = String(Math.floor(tot / 60)).padStart(2, "0") + ":" + String(tot % 60).padStart(2, "0");
+}
+
+function saveNewPlace() {
+  const name = document.getElementById("newPlaceName").value.trim();
+  if (!name) { showToast("장소 이름을 입력해 주세요!"); document.getElementById("newPlaceName").focus(); return; }
+  const newItem = {
+    id: "custom_" + Date.now(), zone: pendingZoneId, name, cat: pendingCat,
+    lat: pendingLatLng.lat, lng: pendingLatLng.lng,
+    addr: document.getElementById("newPlaceAddr").value.trim() || "직접 지정 위치",
+    why: "가족 일정 직접 등록 장소", charm: "", holiday: "", selected: true,
+    day: pendingDay, time: document.getElementById("newPlaceTime").value || "",
+    status: "예약 완료", memo: document.getElementById("newPlaceMemo").value.trim(), isCustom: true
+  };
+  if (!userState.customPlaces[currentTab]) userState.customPlaces[currentTab] = [];
+  userState.customPlaces[currentTab].push(newItem);
+  saveState();
+  closeAddModal();
+  renderCurrentTab();
+  showToast(`'${name}' 등록 및 일정 추가 완료!`);
+}
+
+function deleteCustomPlace(id) {
+  userState.customPlaces[currentTab] = (userState.customPlaces[currentTab] || []).filter(p => p.id !== id);
+  delete userState.overrides[id];
+  saveState();
+  renderCurrentTab();
+  showToast("직접 등록한 장소를 삭제했습니다");
+}
+
+function openScheduleModal(placeId) {
+  const p = getCityPlaces(currentTab).find(x => x.id === placeId);
+  if (!p) return;
+  editingScheduleId = placeId;
+  editingScheduleStatus = p.status || "예약 필수";
+  document.getElementById("schedPlaceTitle").textContent = p.name;
+  document.getElementById("schedTimeInput").value = p.time || "12:00";
+  document.getElementById("schedMemoInput").value = p.memo || "";
+  const city = BASE_CITIES[currentTab];
+  window._schedSelectedDay = p.day || city.dateOptions[0];
+  renderSchedDateChips(city);
+  selectSchedStatus(editingScheduleStatus);
+  document.getElementById("scheduleModal").classList.remove("hidden");
+}
+
+function renderSchedDateChips(city) {
+  document.getElementById("schedDateChips").innerHTML = city.dateOptions.map(d => `<button type="button" onclick="window._schedSelectedDay='${d}'; renderSchedDateChips(BASE_CITIES[currentTab]);" class="px-3 py-2 rounded-xl text-xs font-bold shrink-0 border ${window._schedSelectedDay === d ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-700 border-slate-200"}">${d}</button>`).join("");
+}
+
+function selectSchedStatus(st) {
+  editingScheduleStatus = st;
+  document.querySelectorAll(".st-opt").forEach(btn => {
+    const active = btn.dataset.st === st;
+    btn.className = active ? "st-opt h-11 rounded-xl border text-xs font-bold bg-slate-900 text-white border-slate-900" : "st-opt h-11 rounded-xl border text-xs font-bold bg-white text-slate-700 border-slate-200";
+  });
+}
+
+function adjustSchedTime(delta) {
+  const inp = document.getElementById("schedTimeInput");
+  const [h, m] = (inp.value || "12:00").split(":").map(Number);
+  const tot = (h * 60 + m + delta + 1440) % 1440;
+  inp.value = String(Math.floor(tot / 60)).padStart(2, "0") + ":" + String(tot % 60).padStart(2, "0");
+}
+
+function saveScheduleItem() {
+  if (!editingScheduleId) return;
+  userState.overrides[editingScheduleId] = Object.assign({}, userState.overrides[editingScheduleId], {
+    selected: true, day: window._schedSelectedDay, time: document.getElementById("schedTimeInput").value,
+    status: editingScheduleStatus, memo: document.getElementById("schedMemoInput").value.trim()
+  });
+  saveState();
+  closeScheduleModal();
+  renderCurrentTab();
+  showToast("일정과 예약 정보가 저장되었습니다");
+}
+
+function clearScheduleItem() {
+  if (!editingScheduleId) return;
+  userState.overrides[editingScheduleId] = Object.assign({}, userState.overrides[editingScheduleId], { day: "", time: "", memo: "" });
+  saveState();
+  closeScheduleModal();
+  renderCurrentTab();
+}
+
+function closeScheduleModal() { document.getElementById("scheduleModal").classList.add("hidden"); }
+
+function openTaxiCard(placeId) {
+  const p = getCityPlaces(currentTab).find(x => x.id === placeId);
+  if (!p) return;
+  document.getElementById("taxiPlaceName").textContent = p.name;
+  document.getElementById("taxiPlaceAddr").textContent = p.addr;
+  document.getElementById("taxiPlaceMeta").textContent = `${p.day ? p.day + " " : ""}${p.time || ""} · ${p.status || "워크인"}${p.memo ? " (" + p.memo + ")" : ""}`;
+  document.getElementById("taxiGoogleMapsBtn").href = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p.name + " " + p.addr)}`;
+  document.getElementById("taxiCardModal").classList.remove("hidden");
+}
+
+function closeTaxiCard() { document.getElementById("taxiCardModal").classList.add("hidden"); }
+function copyTaxiAddress() {
+  navigator.clipboard?.writeText(document.getElementById("taxiPlaceAddr").textContent);
+  showToast("주소가 복사되었습니다");
+}
+
+function openMoreMenu() {
+  const city = BASE_CITIES[currentTab] || BASE_CITIES.milan;
+  document.getElementById("moreCityTipsTitle").textContent = `💡 ${city.name} 연말연시·시즌 체크포인트`;
+  document.getElementById("moreCityTipsList").innerHTML = city.tips.map(t => `<li>${t}</li>`).join("");
+  document.getElementById("moreMenuModal").classList.remove("hidden");
+}
+function closeMoreMenu() { document.getElementById("moreMenuModal").classList.add("hidden"); }
+
+function copyShareLink() {
+  const baseUrl = window.location.origin + window.location.pathname;
+  const fbRaw = localStorage.getItem("italy_fb_config");
+  const roomId = localStorage.getItem("italy_fb_room") || "italy-2026-family";
+  const shareUrl = fbRaw
+    ? `${baseUrl}?fb=${encodeURIComponent(btoa(fbRaw))}&room=${encodeURIComponent(roomId)}`
+    : `${baseUrl}?s=${encodeURIComponent(btoa(unescape(encodeURIComponent(JSON.stringify(userState)))))}`;
+  navigator.clipboard?.writeText(shareUrl).then(() => {
+    closeMoreMenu();
+    showToast("🔗 가족 공유 링크가 복사되었습니다! 카톡에 붙여넣으세요");
+  }).catch(() => prompt("아래 링크를 복사해 가족 카톡방에 공유하세요:", shareUrl));
+}
+
+function exportJsonBackup() {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(userState, null, 2)], { type: "application/json" }));
+  a.download = "italy_family_trip_2026_backup.json";
+  a.click();
+  showToast("JSON 백업 파일 저장됨");
+}
+
+function importJsonBackup(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const parsed = JSON.parse(e.target.result);
+      if (parsed.overrides) { userState = parsed; saveState(); closeMoreMenu(); renderCurrentTab(); showToast("백업 일정을 복원했습니다!"); }
+    } catch (err) { showToast("올바른 JSON 백업 파일이 아닙니다"); }
+  };
+  reader.readAsText(file);
+}
+
+function resetAllData() {
+  if (!confirm("직접 등록한 장소와 시간·예약 메모를 모두 초기화할까요?")) return;
+  localStorage.removeItem("italy_family_planner_v3");
+  userState = { overrides: {}, customPlaces: { milan: [], venice: [], florence: [], rome: [] }, airport: {} };
+  saveState();
+  closeMoreMenu();
+  renderCurrentTab();
+  showToast("초기 추천 상태로 복원되었습니다");
+}
+
+function openFirebaseModal() {
+  document.getElementById("fbRoomInput").value = localStorage.getItem("italy_fb_room") || "italy-2026-family";
+  document.getElementById("fbConfigInput").value = localStorage.getItem("italy_fb_config") || "";
+  document.getElementById("firebaseModal").classList.remove("hidden");
+}
+function closeFirebaseModal() { document.getElementById("firebaseModal").classList.add("hidden"); }
+
+function parseFirebaseConfigText(raw) {
+  if (!raw) return null;
+  if (typeof raw === "object") return raw;
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try { return Function('"use strict";return (' + match[0] + ')')(); } catch (e) { return null; }
+}
+
+function initFirebaseIfConfigured() {
+  const cfg = parseFirebaseConfigText(localStorage.getItem("italy_fb_config")) || DEFAULT_FIREBASE_CONFIG;
+  if (!cfg || !cfg.apiKey || !cfg.projectId) return;
+  try {
+    if (!firebase.apps.length) firebase.initializeApp(cfg);
+    firebase.auth().signInAnonymously().catch(() => {});
+    fbDb = firebase.firestore();
+    const roomId = localStorage.getItem("italy_fb_room") || "italy-2026-family";
+    if (fbUnsubscribe) fbUnsubscribe();
+    fbUnsubscribe = fbDb.collection("italyTrips").doc(roomId).onSnapshot((doc) => {
+      updateSyncUi(true);
+      if (doc.exists && doc.data().payload) {
+        try {
+          isApplyingRemote = true;
+          userState = Object.assign({ overrides: {}, customPlaces: { milan: [], venice: [], florence: [], rome: [] } }, JSON.parse(doc.data().payload));
+          localStorage.setItem("italy_family_planner_v3", JSON.stringify(userState));
+          renderCurrentTab();
+        } finally { isApplyingRemote = false; }
+      } else { saveState(); }
+    }, () => updateSyncUi(false));
+  } catch (e) { updateSyncUi(false); }
+}
+
+function updateSyncUi(connected) {
+  document.getElementById("syncDot").className = connected ? "w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" : "w-2.5 h-2.5 rounded-full bg-slate-400";
+  document.getElementById("syncLabel").textContent = connected ? "실시간 동기화됨" : "로컬 저장";
+  document.getElementById("syncShort").textContent = connected ? "동기화" : "로컬";
+}
+
+function saveFirebaseConfig() {
+  const cfg = parseFirebaseConfigText(document.getElementById("fbConfigInput").value.trim());
+  const room = document.getElementById("fbRoomInput").value.trim() || "italy-2026-family";
+  if (!cfg || !cfg.apiKey || !cfg.projectId) { showToast("firebaseConfig 형식을 확인해 주세요 (apiKey, projectId 필수)"); return; }
+  localStorage.setItem("italy_fb_config", JSON.stringify(cfg, null, 2));
+  localStorage.setItem("italy_fb_room", room);
+  closeFirebaseModal();
+  initFirebaseIfConfigured();
+  showToast("🟢 Firebase 실시간 동기화가 연결되었습니다!");
+}
+
+function disconnectFirebase() {
+  if (fbUnsubscribe) fbUnsubscribe();
+  fbDb = null;
+  localStorage.removeItem("italy_fb_config");
+  updateSyncUi(false);
+  closeFirebaseModal();
+  showToast("실시간 동기화가 해제되었습니다");
+}
+</script>
+</body>
+</html>
